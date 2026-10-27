@@ -26,8 +26,13 @@ struct ShandianApp: App {
                 }
                 .keyboardShortcut("v", modifiers: [.command, .shift])
             }
-            CommandGroup(after: .appSettings) { ClipboardToggle() }
+            CommandGroup(after: .appSettings) { ClipboardToggle(); BrowserMenuButton() }
         }
+
+        Window("浏览器扩展", id: "browser") {
+            BrowserSetupView(token: store.engineToken)
+        }
+        .windowResizability(.contentSize)
 
         Window("关于闪电下载", id: "about") {
             AboutView()
@@ -47,6 +52,11 @@ struct ShandianApp: App {
 struct ClipboardToggle: View {
     @AppStorage(ClipboardWatcher.enabledKey) private var on = true
     var body: some View { Toggle("复制链接后弹出下载提示", isOn: $on) }
+}
+
+struct BrowserMenuButton: View {
+    @Environment(\.openWindow) private var openWindow
+    var body: some View { Button("浏览器扩展…") { openWindow(id: "browser"); NSApp.activate(ignoringOtherApps: true) } }
 }
 
 private struct AboutMenuButton: View {
@@ -124,6 +134,7 @@ struct MenuBarContent: View {
         Button(store.allPaused ? "全部继续" : "全部暂停") { store.toggleAll() }.disabled(active.isEmpty)
         Divider()
         ClipboardToggle()
+        BrowserMenuButton()
         Divider()
         Button("退出") { NSApp.terminate(nil) }.keyboardShortcut("q")
     }
