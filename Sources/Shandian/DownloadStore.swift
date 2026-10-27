@@ -22,6 +22,8 @@ struct Item: Identifiable, Equatable {
     var thumbRemote: String?
     var linkKey: String         // 去重用：磁力 hash 或原始链接
     var location: URL? = nil    // 移到废纸篓时扔这个：多文件种子是整个文件夹，其余同 file
+    var fileGone = false        // 下完后文件被用户在访达里删了或移走（硬盘没插不算）
+    var avgSpeed: Int64 = 0     // 平滑后的速度，算剩余时间用；瞬时速度跳得厉害，行内和顶部估算会对不上
 
     var progress: Double { total > 0 ? min(1, Double(downloaded) / Double(total)) : 0 }
     var isActive: Bool { if case .done = status { return false }; return true }
@@ -74,6 +76,7 @@ final class DownloadStore: ObservableObject {
     private var pending: [Item] = []
     private var engineItems: [Item] = []
     private var lastStatus: [String: Item.Status] = [:]
+    private var smoothSpeed: [String: Double] = [:]
     private var seenClipboard = Set<String>()
     private var pollTask: Task<Void, Never>?
     private let videosFile = EngineConfig.supportDir.appendingPathComponent("videos.json")
@@ -136,6 +139,12 @@ final class DownloadStore: ObservableObject {
         if engineState == .running, let tasks = try? await host.client.tasks() {
             engineItems = tasks.map(Self.item(from:))
         }
+        // 指数平滑，约 5 次轮询的窗口；行内剩余时间和顶部「全部完成」用同一个值
+        var next: [String: Double] = [:]
+        for i in engineItems + videoJobs.map(Self.item(from:)) where i.status == .running {
+            next[i.id] = smoothSpeed[i.id].map { $0 * 0.8 + Double(i.speed) * 0.2 } ?? Double(i.speed)
+        }
+        smoothSpeed = next
         rebuild()
         let total = items.reduce(Int64(0)) { $0 + ($1.isActive ? $1.speed : 0) }
         speedHistory.append(Double(total)); speedHistory.removeFirst(speedHistory.count - 60)
@@ -145,6 +154,10 @@ final class DownloadStore: ObservableObject {
         let videos = videoJobs.map(Self.item(from:))
         var all = pending + engineItems + videos
         all.sort { $0.createdAt > $1.createdAt }
+        for k in all.indices {
+            all[k].avgSpeed = Int64(smoothSpeed[all[k].id] ?? 0)
+            if !all[k].isActive, let f = all[k].location ?? all[k].file { all[k].fileGone = Self.isGone(f) }
+        }
         for i in all where lastStatus[i.id] != nil && lastStatus[i.id] != .done && i.status == .done { didFinish(i) }
         for i in all { lastStatus[i.id] = i.status }
         for i in all where i.category == .movie || i.category == .other {
@@ -154,6 +167,13 @@ final class DownloadStore: ObservableObject {
         }
         for i in all where i.thumbRemote != nil { thumbs.requestRemote(id: i.id, url: i.thumbRemote) }
         if all != items { items = all }
+    }
+
+    /// 文件不在了才算；所在的移动硬盘没插上时不算，免得一拔硬盘满屏「已删除」
+    private static func isGone(_ f: URL) -> Bool {
+        let comps = f.pathComponents
+        if comps.count > 2, comps[1] == "Volumes", !FileManager.default.fileExists(atPath: "/Volumes/" + comps[2]) { return false }
+        return !FileManager.default.fileExists(atPath: f.path)
     }
 
     // MARK: 视图用
@@ -177,8 +197,8 @@ final class DownloadStore: ObservableObject {
     /// 剩余时间按最近 5 秒的平均速度估，不跟着瞬时速度乱跳
     var etaAll: Double {
         let left = items.filter(\.isActive).reduce(Int64(0)) { $0 + max(0, $1.total - $1.downloaded) }
-        let avg = speedHistory.suffix(5).reduce(0, +) / 5
-        return avg > 0 ? Double(left) / avg : .infinity
+        let avg = items.filter(\.isActive).reduce(Int64(0)) { $0 + $1.avgSpeed }
+        return avg > 0 ? Double(left) / Double(avg) : .infinity
     }
 
     // MARK: 添加

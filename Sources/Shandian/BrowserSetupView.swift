@@ -53,7 +53,7 @@ struct BrowserSetupView: View {
                 field("密钥 / Token", token, secret: true)
                 VStack(alignment: .leading, spacing: 5) {
                     Text("Gopeed 扩展：设置 → 远程下载 → 开启，添加服务器，填入上面的地址和 Token。")
-                    Text("LinkSwift：在网盘页面打开其设置 → Aria2 RPC，地址 http://127.0.0.1，端口 \(Gateway.port)，路径 /jsonrpc，密钥填 Token。")
+                    Text(verbatim: "LinkSwift：在网盘页面打开其设置 → Aria2 RPC，地址 http://127.0.0.1，端口 \(Gateway.port)，路径 /jsonrpc，密钥填 Token。")
                     Text("Chrome 中的篡改猴需在扩展详情页打开「允许用户脚本」。")
                 }
                 .font(.system(size: 12.5)).foregroundStyle(Theme.text.opacity(0.8)).fixedSize(horizontal: false, vertical: true)

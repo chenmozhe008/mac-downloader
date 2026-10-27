@@ -25,6 +25,7 @@ rm -rf "$APP"; mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/$EXECUTABLE_NAME"
 cp "$ICNS" "$APP/Contents/Resources/AppIcon.icns"
 cp "$ROOT/CHANGELOG.md" "$APP/Contents/Resources/CHANGELOG.md"  # 「关于 → 更新记录」直接读它
+mkdir -p "$APP/Contents/Resources/zh-Hans.lproj"  # 声明中文，系统菜单（文件、编辑、窗口）才显示中文
 # 强调色（琥珀）：侧栏选中行、按钮等系统控件跟随它；SwiftPM 不编译 xcassets，这里用 actool 单独编
 xcrun actool "$ROOT/Resources/Assets.xcassets" --compile "$APP/Contents/Resources" --platform macosx \
   --minimum-deployment-target 14.0 --accent-color AccentColor --output-partial-info-plist "$ROOT/tmp/assets-info.plist" >/dev/null
@@ -33,6 +34,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
+  <key>CFBundleDevelopmentRegion</key><string>zh-Hans</string>
+  <key>CFBundleLocalizations</key><array><string>zh-Hans</string></array>
   <key>CFBundleExecutable</key><string>$EXECUTABLE_NAME</string>
   <key>CFBundleIdentifier</key><string>$BUNDLE_ID</string>
   <key>CFBundleName</key><string>$APP_NAME</string>

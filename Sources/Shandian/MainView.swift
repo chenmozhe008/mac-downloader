@@ -415,7 +415,7 @@ struct TaskRow: View {
     }
     private var secondary: String {
         switch item.status {
-        case .running: item.speed > 0 ? remainingText(Double(item.total - item.downloaded) / Double(item.speed)) : "正在连接"
+        case .running: item.avgSpeed > 0 ? remainingText(Double(item.total - item.downloaded) / Double(item.avgSpeed)) : "正在连接"
         case .resolving(let since):
             Date().timeIntervalSince(since) > 180 ? "资源较冷门，仍在尝试" : "正在寻找资源"
         case .paused, .waiting: item.total > 0 ? "\(Int(item.progress * 100))%" : ""
@@ -451,15 +451,19 @@ private struct ItemMenu: View {
     @ObservedObject var store: DownloadStore
     let item: Item
     var body: some View {
-        if !item.isActive { Button("打开") { store.open(item) } }
-        Button("在访达中显示") { store.reveal(item) }
-        if item.isFailed {
-            Button("重试") { store.retry(item) }
-        } else if case .engine = item.source, item.isActive {
-            Button(item.status == .paused ? "继续" : "暂停") { store.togglePause(item) }
+        if item.fileGone {
+            Button("从列表移除") { store.remove(item, moveFiles: false) }
+        } else {
+            if !item.isActive { Button("打开") { store.open(item) } }
+            Button("在访达中显示") { store.reveal(item) }
+            if item.isFailed {
+                Button("重试") { store.retry(item) }
+            } else if case .engine = item.source, item.isActive {
+                Button(item.status == .paused ? "继续" : "暂停") { store.togglePause(item) }
+            }
+            Divider()
+            Button("移除…") { store.removalTarget = item }
         }
-        Divider()
-        Button("移除…") { store.removalTarget = item }
     }
 }
 
@@ -494,17 +498,22 @@ private struct DoneCard: View {
         VStack(alignment: .leading, spacing: 0) {
             GeometryReader { g in Thumb(thumbs: store.thumbs, item: item, width: g.size.width) }
                 .aspectRatio(16 / 9, contentMode: .fit)
+                .opacity(item.fileGone ? 0.45 : 1)
             Text(item.title).font(.system(size: 14, weight: .medium)).lineLimit(1).truncationMode(.middle).padding(.top, 8).help(item.rawTitle)
             HStack(spacing: 10) {
-                Text(item.total.bytesText)
-                Text(item.origin)
+                if item.fileGone {
+                    Text("文件已删除")
+                } else {
+                    Text(item.total.bytesText)
+                    Text(item.origin)
+                }
             }
             .font(.system(size: 12.5)).foregroundStyle(Theme.sub).padding(.top, 2)
         }
         .contentShape(Rectangle())
-        .onTapGesture(count: 2) { store.open(item) }
+        .onTapGesture(count: 2) { if !item.fileGone { store.open(item) } }
         .contextMenu { ItemMenu(store: store, item: item) }
-        .help("双击打开")
+        .help(item.fileGone ? "文件已不在原位置，可右键从列表移除" : "双击打开")
     }
 }
 
