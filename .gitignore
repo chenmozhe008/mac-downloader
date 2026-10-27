@@ -1,0 +1,10 @@
+.env
+*.env
+tmp/
+output/
+dist/
+logs/
+.build/
+engine/bin/
+engine/data/
+.DS_Store
