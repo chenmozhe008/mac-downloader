@@ -91,6 +91,7 @@ final class DownloadStore: ObservableObject {
         watcher = ClipboardWatcher(store: self)
         gateway = Gateway(store: self); gateway?.start()
         Task.detached { await YtDlp.ensureFresh() }
+        BrowserExtension.install()
         NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.checkClipboard() }
         }
@@ -114,7 +115,12 @@ final class DownloadStore: ObservableObject {
         await host.client.forward(method: method, path: path, body: body)
     }
 
+    /// 退出时关内核，内核会把下载中的任务记成暂停；记下这些任务，下次启动接着下
     func shutdown() {
+        let running = engineItems.filter { $0.isActive && $0.status != .paused }.compactMap { i -> String? in
+            if case .engine(let id) = i.source { return id }; return nil
+        }
+        UserDefaults.standard.set(running, forKey: "resumeOnLaunch")
         videoRunner.cancelAll()
         host.stop()
     }
@@ -126,6 +132,8 @@ final class DownloadStore: ObservableObject {
         case .running:
             engineState = .running
             await host.client.applySettings(defaultDir: Folders.downloads.path)
+            for id in UserDefaults.standard.stringArray(forKey: "resumeOnLaunch") ?? [] { try? await host.client.resume(id) }
+            UserDefaults.standard.removeObject(forKey: "resumeOnLaunch")
         case .missingDisk: engineState = .missingDisk
         case .failed(let m): engineState = .failed(m)
         }
@@ -481,11 +489,11 @@ final class DownloadStore: ObservableObject {
         return URL(string: link)?.lastPathComponent.removingPercentEncoding ?? link
     }
 
-    /// 走本机代理取回网页上的种子文件（海外站点常被墙）
+    /// 取回网页上的种子文件；海外站点走代理（常被墙），国内站直连
     static func fetchTorrent(_ link: String) async -> Data? {
         guard let u = URL(string: link) else { return nil }
         let cfg = URLSessionConfiguration.ephemeral
-        cfg.connectionProxyDictionary = LocalProxy.sessionDictionary
+        cfg.connectionProxyDictionary = LocalProxy.sessionDictionary(for: link)
         cfg.timeoutIntervalForRequest = 30
         guard let (data, resp) = try? await URLSession(configuration: cfg).data(from: u),
               (resp as? HTTPURLResponse)?.statusCode == 200, data.first == UInt8(ascii: "d") else { return nil }  // 种子是 bencode 字典，以 d 开头

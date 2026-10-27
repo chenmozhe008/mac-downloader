@@ -3,9 +3,12 @@ import Network
 
 /// 本机网关 127.0.0.1:6800（只监听本机），让浏览器里的下载也走 App 的规则（存哪、只选正片、片名整理）：
 /// - POST /jsonrpc：兼容 Aria2 RPC（LinkSwift 推网盘直链用，aria2.addUri / getVersion），密钥＝内核 token
+/// - POST /extension/add：自带的浏览器扩展（`browser-extension/`）交下载用，只认该扩展的 Origin，不用密钥
 /// - /api/v1/*：代理 Gopeed 浏览器扩展；新建任务改走 App 的添加流程，其余请求原样转给内核
 final class Gateway: @unchecked Sendable {
     static let port: UInt16 = 6800
+    /// 扩展 ID 由 manifest 里的 key 决定，Chrome 和 Edge 相同；网页伪造不了 Origin 头
+    static let extensionOrigin = "chrome-extension://pggchniffhkcgigajlapkboikmgdipel"
     private var listener: NWListener?
     private weak var store: DownloadStore?
     private let token: String
@@ -76,6 +79,7 @@ final class Gateway: @unchecked Sendable {
     private func handle(_ r: Request) async -> (Int, Data) {
         if r.method == "OPTIONS" { return (200, Data()) }
         if r.path.hasPrefix("/jsonrpc") { return (200, await aria2(r.body)) }
+        if r.path.hasPrefix("/extension/") { return await fromExtension(r) }
         if r.path.hasPrefix("/api/v1/") { return await gopeed(r) }
         return (404, json(["error": "not found"]))
     }
@@ -119,6 +123,20 @@ final class Gateway: @unchecked Sendable {
         default:
             return fail(1, "Method not supported")
         }
+    }
+
+    // MARK: 自带扩展
+
+    private func fromExtension(_ r: Request) async -> (Int, Data) {
+        guard r.headers["origin"] == Self.extensionOrigin else { return (403, json(["ok": false])) }
+        let browser = r.headers["user-agent"]?.contains("Edg/") == true ? "Edge" : "Chrome"
+        await MainActor.run { BrowserExtension.markConnected(browser) }
+        if r.path.hasPrefix("/extension/ping") { return (200, json(["ok": true])) }
+        guard r.method == "POST", let obj = try? JSONSerialization.jsonObject(with: r.body) as? [String: Any],
+              let url = obj["url"] as? String, LinkKind.of(url) != nil else { return (400, json(["ok": false])) }
+        let headers = obj["headers"] as? [String: String] ?? [:]
+        await MainActor.run { store?.add(link: url, headers: headers, name: obj["name"] as? String); store?.section = .active }
+        return (200, json(["ok": true]))
     }
 
     // MARK: Gopeed 扩展

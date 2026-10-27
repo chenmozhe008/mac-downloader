@@ -70,7 +70,7 @@ enum YtDlp {
         guard Date().timeIntervalSince(modified) > 7 * 86400 else { return }
         let p = Process()
         p.executableURL = bundled
-        p.arguments = ["-U"] + LocalProxy.ytdlpArguments
+        p.arguments = ["-U"] + LocalProxy.ytdlpArguments(for: "https://github.com")
         p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
         try? p.run(); p.waitUntilExit()
         try? fm.setAttributes([.modificationDate: Date()], ofItemAtPath: bundled.path)  // 已是最新时 -U 不改文件，手动记一下检查时间
@@ -107,7 +107,7 @@ final class VideoSiteRunner: @unchecked Sendable {
             "--progress-template", "download:SDPROG %(progress.downloaded_bytes)s %(progress.total_bytes)s %(progress.total_bytes_estimate)s %(progress.speed)s %(progress.status)s",
             job.url,
         ]
-        p.arguments?.insert(contentsOf: (job.options ?? VideoOptions()).arguments + LocalProxy.ytdlpArguments, at: 0)
+        p.arguments?.insert(contentsOf: (job.options ?? VideoOptions()).arguments + LocalProxy.ytdlpArguments(for: job.url), at: 0)
         // YouTube 需要 JS 运行环境解签名，没有时部分格式缺失（10-27 实测 44 → 52 个格式）；本机有 Node 就接上
         if let node = ["/opt/homebrew/bin/node", "/usr/local/bin/node"].first(where: { FileManager.default.isExecutableFile(atPath: $0) }) {
             p.arguments?.insert(contentsOf: ["--js-runtimes", "node:" + node], at: 0)

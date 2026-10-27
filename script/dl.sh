@@ -11,10 +11,12 @@ video_site(){ echo "$1" | grep -qiE '^https?://([a-z0-9-]+\.)*(bilibili\.com|b23
 
 if video_site "$LINK"; then
   mkdir -p "$VIDEOS"
-  # 视频站走代理（境外站必须；国内站经 Clash 规则直连）
+  # 国内站（B 站、微博、抖音等）直连，境外站走代理；规则同 App 的 LocalProxy
+  PROXY=(--proxy http://127.0.0.1:7897)
+  echo "$LINK" | grep -qiE '^https?://([a-z0-9-]+\.)*(bilibili\.com|b23\.tv|douyin\.com|xiaohongshu\.com|xhslink\.com|kuaishou\.com|weibo\.com|ixigua\.com)/' && PROXY=()
   # 用 App 自带、每周自更新的 yt-dlp（brew 里的旧版下 B 站会 412）
   YTDLP="$HOME/Library/Application Support/ShandianDownload/bin/yt-dlp"; [ -x "$YTDLP" ] || YTDLP=yt-dlp
-  exec "$YTDLP" --proxy http://127.0.0.1:7897 -P "$VIDEOS" -o "%(title).80s [%(id)s].%(ext)s" \
+  exec "$YTDLP" "${PROXY[@]}" -P "$VIDEOS" -o "%(title).80s [%(id)s].%(ext)s" \
     -f "bv*+ba/b" -S "res,vcodec:h264,acodec:aac" --merge-output-format mp4 --no-playlist "$LINK"
 fi
 

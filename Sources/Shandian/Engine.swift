@@ -113,6 +113,8 @@ final class EngineClient: @unchecked Sendable {
         if let selectFiles { opts["selectFiles"] = selectFiles }
         if let name, !name.isEmpty { opts["name"] = name }
         var req: [String: Any] = ["url": url]
+        // 磁力 / 种子不设：内核全局代理已关，BT 直连
+        if url.lowercased().hasPrefix("http") { req["proxy"] = LocalProxy.engineRequest(for: url) }
         if !headers.isEmpty { req["extra"] = ["header": headers] }  // 网盘直链要带浏览器的 Cookie、UA、Referer
         return try await call("POST", "tasks", body: ["req": req, "opts": opts]) ?? ""
     }
@@ -168,7 +170,16 @@ final class EngineHost: @unchecked Sendable {
         return .failed("内核没有响应")
     }
 
-    func stop() { process?.terminate() }
+    /// 先让内核把任务都暂停（暂停时会落盘保存进度），再结束进程。
+    /// 10-28《求救信号》重启内核后已下的 1.8 GB 没了，没能复现出原因；直接 SIGTERM 是唯一可疑的环节，先加这道保险
+    func stop() {
+        guard let process else { return }
+        let done = DispatchSemaphore(value: 0)
+        Task { try? await client.pauseAll(); done.signal() }
+        _ = done.wait(timeout: .now() + 3)
+        Thread.sleep(forTimeInterval: 0.5)
+        process.terminate()
+    }
 }
 
 // MARK: - 下载设置（与 script/engine.sh configure 保持一致，改值两边一起改）
@@ -182,12 +193,13 @@ extension EngineClient {
         return obj?["data"] as? [String: Any] ?? [:]
     }
 
-    /// 代理 7897（Clash 没开时关掉）、HTTP 8 连接（国内镜像 16 线程会被封）、BT 固定端口 6881、每次启动更新 tracker（拉取失败保留旧列表）
+    /// 全局代理关（HTTP 任务按域名单独走代理）、HTTP 8 连接（国内镜像 16 线程会被封）、BT 固定端口 6881、每次启动更新 tracker（拉取失败保留旧列表）
     func applySettings(defaultDir: String) async {
         guard var cfg = try? await rawConfig() else { return }
         cfg["downloadDir"] = defaultDir
         cfg["maxRunning"] = 5
-        cfg["proxy"] = ["enable": LocalProxy.isUp, "system": false, "scheme": "http", "host": "\(LocalProxy.host):\(LocalProxy.port)", "usr": "", "pwd": ""]
+        // 全局代理关：开着时 BT 连接也走 Clash（见 LocalProxy 说明）；HTTP 任务各自带代理设置
+        cfg["proxy"] = ["enable": false, "system": false, "scheme": "http", "host": "\(LocalProxy.host):\(LocalProxy.port)", "usr": "", "pwd": ""]
         var proto = cfg["protocolConfig"] as? [String: Any] ?? [:]
         var http = proto["http"] as? [String: Any] ?? [:]; http["connections"] = 8
         // 不冒充浏览器：Go 的 TLS 握手配 Chrome UA 会被识别为伪装爬虫 403（10-27 中科大实测，内核默认 Chrome 116 / 改 141 都 403，

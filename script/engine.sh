@@ -37,7 +37,8 @@ import json,sys
 d=json.load(sys.stdin)
 d["downloadDir"]=__import__("os").path.expanduser("~/Downloads")
 d["maxRunning"]=5
-d["proxy"]={"enable":True,"system":False,"scheme":"http","host":"127.0.0.1:7897","usr":"","pwd":""}
+d["proxy"]={"enable":False,  # 全局代理关：开着时 BT 连接也绕 Clash；HTTP 任务由 App 按域名单独设代理
+ "system":False,"scheme":"http","host":"127.0.0.1:7897","usr":"","pwd":""}
 d["protocolConfig"].setdefault("http",{})["connections"]=8
 d["protocolConfig"]["http"]["userAgent"]="ShandianDownload (Macintosh)"  # 不冒充浏览器：Go 握手 + Chrome UA 会被部分镜像当伪装爬虫 403
 d["protocolConfig"].setdefault("bt",{})["listenPort"]=6881
