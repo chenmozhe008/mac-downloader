@@ -197,7 +197,7 @@ extension EngineClient {
     func applySettings(defaultDir: String) async {
         guard var cfg = try? await rawConfig() else { return }
         cfg["downloadDir"] = defaultDir
-        cfg["maxRunning"] = 5
+        cfg["maxRunning"] = Prefs.maxRunning
         // 全局代理关：开着时 BT 连接也走 Clash（见 LocalProxy 说明）；HTTP 任务各自带代理设置
         cfg["proxy"] = ["enable": false, "system": false, "scheme": "http", "host": "\(LocalProxy.host):\(LocalProxy.port)", "usr": "", "pwd": ""]
         var proto = cfg["protocolConfig"] as? [String: Any] ?? [:]

@@ -93,19 +93,27 @@ private struct Sidebar: View {
         .padding(.horizontal, 18).padding(.top, 4).padding(.bottom, 6)
     }
 
-    /// 侧栏底部：「关于闪电下载」+ 版本号，一个入口；打开是介绍页，更新记录、反馈在里面切换
+    /// 侧栏底部：「关于闪电下载」打开介绍，点版本号直接看更新记录
     private var versionRow: some View {
-        Button { AppInfo.showAbout(.intro, openWindow) } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "info.circle")
-                Text("关于闪电下载")
-                Spacer()
-                Text(AppInfo.version).monospacedDigit()
+        HStack(spacing: 6) {
+            Button { AppInfo.showAbout(.intro, openWindow) } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "info.circle")
+                    Text("关于闪电下载").lineLimit(1).fixedSize()
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
             }
-            .font(.system(size: 12.5)).foregroundStyle(Theme.sub)
-            .contentShape(Rectangle())
+            .help("关于闪电下载")
+            Button { AppInfo.showAbout(.changelog, openWindow) } label: {
+                Text(AppInfo.version).monospacedDigit().lineLimit(1).fixedSize()
+                    .padding(.horizontal, 7).padding(.vertical, 2)
+                    .background(Capsule().fill(Theme.faint))
+            }
+            .help("查看更新记录")
         }
         .buttonStyle(.plain)
+        .font(.system(size: 12.5)).foregroundStyle(Theme.sub)
         .padding(.horizontal, 18)
     }
 
@@ -257,6 +265,8 @@ private struct SpeedHero: View {
                     let n = store.activeItems.count - failed
                     if n > 0 { Text("\(n) 项进行中") }
                     if failed > 0 { Text("\(failed) 项失败") }
+                    let checking = store.activeItems.filter(\.checking).count
+                    if checking > 0 { Text("\(checking) 项正在校验已下载的部分") }
                     let eta = remainingText(store.etaAll).replacingOccurrences(of: "剩余 ", with: "")
                     if moving, !eta.isEmpty { Text("预计 \(eta)后全部完成") }
                 }
@@ -376,7 +386,7 @@ struct TaskRow: View {
                     if case .failed(let m) = item.status { Text(m).foregroundStyle(Theme.failed) }
                 }
                 .font(.system(size: 13)).foregroundStyle(Theme.sub).lineLimit(1)
-                ProgressBar(value: item.progress, dim: item.status == .paused || item.isResolving)
+                ProgressBar(value: item.progress, dim: item.status == .paused || item.isResolving || item.checking)
                     .padding(.top, 7)
             }
             VStack(alignment: .trailing, spacing: 3) {
@@ -416,7 +426,7 @@ struct TaskRow: View {
     }
     private var primary: String {
         switch item.status {
-        case .running: item.speed.speedText
+        case .running: item.checking ? "正在校验" : item.speed.speedText
         case .paused: "已暂停"
         case .waiting: "排队中"
         case .resolving: "正在解析"
@@ -426,6 +436,7 @@ struct TaskRow: View {
     }
     private var secondary: String {
         switch item.status {
+        case .running where item.checking: "核对已下载的部分"
         case .running: item.avgSpeed > 0 ? remainingText(Double(item.total - item.downloaded) / Double(item.avgSpeed)) : "正在连接"
         case .resolving(let since):
             Date().timeIntervalSince(since) > 180 ? "资源较冷门，仍在尝试" : "正在寻找资源"
@@ -614,11 +625,5 @@ private struct NewDownloadSheet: View {
         case nil: "无法识别"
         }
     }
-    private func folderName(_ k: LinkKind?) -> String {
-        guard let k else { return "—" }
-        let d = Folders.directory(for: k)
-        if d == Folders.movies { return "移动硬盘 › movies" }
-        if d == Folders.downloads { return "下载" }
-        return "下载 › " + d.lastPathComponent
-    }
+    private func folderName(_ k: LinkKind?) -> String { k.map { Folders.displayName(Folders.directory(for: $0)) } ?? "—" }
 }

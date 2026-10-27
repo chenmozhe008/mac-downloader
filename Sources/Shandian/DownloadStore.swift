@@ -23,6 +23,7 @@ struct Item: Identifiable, Equatable {
     var thumbRemote: String?
     var linkKey: String         // 去重用：磁力 hash 或原始链接
     var location: URL? = nil    // 移到废纸篓时扔这个：多文件种子是整个文件夹，其余同 file
+    var checking = false        // 重启后内核在校验已下载部分：进度从 0 涨回去，那段「速度」是读本地硬盘，不算下载
     var fileGone = false        // 下完后文件被用户在访达里删了或移走（硬盘没插不算）
     var avgSpeed: Int64 = 0     // 平滑后的速度，算剩余时间用；瞬时速度跳得厉害，行内和顶部估算会对不上
 
@@ -74,11 +75,14 @@ final class DownloadStore: ObservableObject {
     private var gateway: Gateway?
     private let host = EngineHost()
     private let videoRunner = VideoSiteRunner()
+    private let sleepGuard = SleepGuard()
     private var videoJobs: [VideoJob] = []
     private var pending: [Item] = []
     private var engineItems: [Item] = []
     private var lastStatus: [String: Item.Status] = [:]
     private var smoothSpeed: [String: Double] = [:]
+    /// 退出时各 BT 任务已下的量；重启后低于它就是在校验
+    private var checkFloor: [String: Int64] = (UserDefaults.standard.dictionary(forKey: "progressAtQuit") as? [String: Int64]) ?? [:]
     private var seenClipboard = Set<String>()
     private var pollTask: Task<Void, Never>?
     private let videosFile = EngineConfig.supportDir.appendingPathComponent("videos.json")
@@ -113,6 +117,12 @@ final class DownloadStore: ObservableObject {
     }
 
     var engineToken: String { host.stored.token }
+
+    /// 偏好设置改了同时下载数等，重新写进内核
+    func reapplyEngineSettings() {
+        guard engineState == .running else { return }
+        Task { await host.client.applySettings(defaultDir: Folders.downloads.path) }
+    }
     func forwardToEngine(method: String, path: String, body: Data?) async -> (Int, Data) {
         await host.client.forward(method: method, path: path, body: body)
     }
@@ -123,6 +133,10 @@ final class DownloadStore: ObservableObject {
             if case .engine(let id) = i.source { return id }; return nil
         }
         UserDefaults.standard.set(running, forKey: "resumeOnLaunch")
+        var floor: [String: Int64] = [:]
+        // 取较大的：还在校验时退出，内核报的是校验进度，比真实已下的少
+        for i in engineItems where i.isActive { floor[i.id] = max(i.downloaded, checkFloor[i.id] ?? 0) }
+        UserDefaults.standard.set(floor, forKey: "progressAtQuit")
         videoRunner.cancelAll()
         host.stop()
     }
@@ -148,6 +162,17 @@ final class DownloadStore: ObservableObject {
         }
         if engineState == .running, let tasks = try? await host.client.tasks() {
             engineItems = tasks.map(Self.item(from:))
+            for k in engineItems.indices {
+                let id = engineItems[k].id
+                guard let floor = checkFloor[id] else { continue }
+                if engineItems[k].status == .running, engineItems[k].downloaded < floor - floor / 50 {
+                    engineItems[k].checking = true; engineItems[k].speed = 0
+                    engineItems[k].downloaded = floor  // 进度条停在退出前的位置，不往回跳
+                } else if !engineItems[k].isActive || engineItems[k].downloaded > floor + 50 << 20 {
+                    // 刚启动时内核先报退出前的值、过几秒才掉到 0 开始校验，所以要明显超过才算校验完
+                    checkFloor[id] = nil
+                }
+            }
         }
         // 指数平滑，约 5 次轮询的窗口；行内剩余时间和顶部「全部完成」用同一个值
         var next: [String: Double] = [:]
@@ -156,6 +181,7 @@ final class DownloadStore: ObservableObject {
         }
         smoothSpeed = next
         rebuild()
+        sleepGuard.update(downloading: items.contains { $0.status == .running })
         let total = items.reduce(Int64(0)) { $0 + ($1.isActive ? $1.speed : 0) }
         speedHistory.append(Double(total)); speedHistory.removeFirst(speedHistory.count - 60)
     }
@@ -447,6 +473,7 @@ final class DownloadStore: ObservableObject {
     // MARK: 完成通知
 
     private func didFinish(_ item: Item) {
+        guard Prefs.notify else { return }
         let center = UNUserNotificationCenter.current()
         center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
             guard granted else { return }

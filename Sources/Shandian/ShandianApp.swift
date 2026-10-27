@@ -26,7 +26,11 @@ struct ShandianApp: App {
                 }
                 .keyboardShortcut("v", modifiers: [.command, .shift])
             }
-            CommandGroup(after: .appSettings) { ClipboardToggle(); BrowserMenuButton() }
+            CommandGroup(after: .appSettings) { BrowserMenuButton() }
+        }
+
+        Settings {
+            SettingsView(store: store)
         }
 
         Window("浏览器扩展", id: "browser") {

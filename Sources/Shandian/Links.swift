@@ -70,9 +70,13 @@ enum Category: String, CaseIterable, Identifiable {
 }
 
 enum Folders {
-    static let movies = URL(fileURLWithPath: "/Volumes/Jack Feng/movies")
+    static let defaultMovies = URL(fileURLWithPath: "/Volumes/Jack Feng/movies")
     static let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
-    static var videos: URL { downloads.appendingPathComponent("视频") }
+    /// 三类默认位置，偏好设置里可改（存 UserDefaults 的 dir.movie / dir.video / dir.other）
+    static var movies: URL { custom("dir.movie") ?? defaultMovies }
+    static var videos: URL { custom("dir.video") ?? downloads.appendingPathComponent("视频") }
+    static var others: URL { custom("dir.other") ?? downloads }
+    private static func custom(_ key: String) -> URL? { UserDefaults.standard.string(forKey: key).map { URL(fileURLWithPath: $0) } }
     /// 移动硬盘没插时电影的兜底位置
     static var moviesFallback: URL { downloads.appendingPathComponent("电影") }
 
@@ -83,7 +87,7 @@ enum Folders {
 
     /// 界面上说的位置名：移动硬盘 › movies、下载、下载 › 视频
     static func displayName(_ d: URL) -> String {
-        if d == movies { return "移动硬盘 › movies" }
+        if d == defaultMovies { return "移动硬盘 › movies" }
         if d == downloads { return "下载" }
         if d.deletingLastPathComponent() == downloads { return "下载 › " + d.lastPathComponent }
         let c = d.pathComponents
@@ -95,7 +99,7 @@ enum Folders {
         switch kind {
         case .magnet, .torrentFile, .ed2k: movieDir
         case .videoSite: videos
-        case .http: downloads
+        case .http: others
         }
     }
 }

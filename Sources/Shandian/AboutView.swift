@@ -63,7 +63,7 @@ struct AboutView: View {
                 }
             }
         }
-        .frame(width: 560, height: 700)
+        .frame(width: 680, height: 720)
         .background(Theme.window)
         .tint(Theme.tint)
     }
