@@ -148,6 +148,11 @@ private struct Content: View {
             }
         }
         .padding(.horizontal, 24).padding(.top, 8)
+        .focusable().focusEffectDisabled()
+        .onKeyPress(keys: [.upArrow, .downArrow, .space, .return, .delete, .deleteForward]) { press in
+            store.handleKey(press.key) ? .handled : .ignored
+        }
+        .onChange(of: store.section) { store.selectedID = nil }
     }
 }
 
@@ -389,15 +394,21 @@ struct TaskRow: View {
                 CircleIconButton(symbol: "xmark", help: "移除") { store.removalTarget = item }
             }
             .frame(width: 80, alignment: .trailing)
-            .opacity(hover.on ? 1 : 0)
+            .opacity(hover.on || selected ? 1 : 0)
         }
-        .padding(.vertical, 10)
-        .overlay(alignment: .top) { Rectangle().fill(Theme.line).frame(height: 0.5) }
+        .padding(.vertical, 10).padding(.horizontal, 10)
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(selected ? Theme.tint.opacity(0.13) : .clear))
+        .overlay(alignment: .top) { Rectangle().fill(Theme.line).frame(height: 0.5).padding(.horizontal, 10).opacity(selected ? 0 : 1) }
         .contentShape(Rectangle())
         .onHover { hover.on = $0 }
-        .onTapGesture(count: 2) { store.reveal(item) }
+        // 单击立即选中（不等双击判定），双击暂停 / 继续
+        .onTapGesture(count: 2) { store.primaryAction(item) }
+        .simultaneousGesture(TapGesture().onEnded { store.selectedID = item.id })
         .contextMenu { ItemMenu(store: store, item: item) }
+        .help(item.isFailed ? "双击重试" : item.status == .paused ? "双击继续" : "双击暂停")
     }
+
+    private var selected: Bool { store.selectedID == item.id }
 
     private var sizeText: String {
         if item.total == 0 { return "" }
@@ -499,6 +510,10 @@ private struct DoneCard: View {
             GeometryReader { g in Thumb(thumbs: store.thumbs, item: item, width: g.size.width) }
                 .aspectRatio(16 / 9, contentMode: .fit)
                 .opacity(item.fileGone ? 0.45 : 1)
+                .overlay {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(Theme.tint, lineWidth: store.selectedID == item.id ? 3 : 0)
+                }
             Text(item.title).font(.system(size: 14, weight: .medium)).lineLimit(1).truncationMode(.middle).padding(.top, 8).help(item.rawTitle)
             HStack(spacing: 10) {
                 if item.fileGone {
@@ -511,7 +526,8 @@ private struct DoneCard: View {
             .font(.system(size: 12.5)).foregroundStyle(Theme.sub).padding(.top, 2)
         }
         .contentShape(Rectangle())
-        .onTapGesture(count: 2) { if !item.fileGone { store.open(item) } }
+        .onTapGesture(count: 2) { store.primaryAction(item) }
+        .simultaneousGesture(TapGesture().onEnded { store.selectedID = item.id })
         .contextMenu { ItemMenu(store: store, item: item) }
         .help(item.fileGone ? "文件已不在原位置，可右键从列表移除" : "双击打开")
     }
@@ -541,7 +557,6 @@ private struct CategoryPage: View {
 
 private struct NewDownloadSheet: View {
     @ObservedObject var store: DownloadStore
-    @State private var options = VideoOptions.current
     var body: some View {
         let links = LinkKind.extract(from: store.newLinksText)
         VStack(alignment: .leading, spacing: 14) {
@@ -572,30 +587,11 @@ private struct NewDownloadSheet: View {
                     if links.count > 5 { Text("等 \(links.count) 个链接").font(.system(size: 11)).foregroundStyle(Theme.sub) }
                 }
             }
-            // 有视频网站链接时才出现；选项会记住，之后 ⌘V 也按它下载
-            if links.contains(where: { LinkKind.of($0) == .videoSite }) {
-                Divider()
-                HStack(spacing: 18) {
-                    HStack(spacing: 8) {
-                        Text("画质").font(.system(size: 12.5)).foregroundStyle(Theme.sub)
-                        Picker("", selection: $options.maxHeight) {
-                            Text("最高").tag(0)
-                            Text("1080P").tag(1080)
-                            Text("720P").tag(720)
-                        }
-                        .pickerStyle(.segmented).labelsHidden().frame(width: 190)
-                        .disabled(options.audioOnly)
-                    }
-                    Toggle("下载字幕", isOn: $options.subtitles).disabled(options.audioOnly)
-                    Toggle("仅音频", isOn: $options.audioOnly)
-                }
-                .font(.system(size: 12.5))
-                .toggleStyle(.checkbox)
-            }
             HStack {
                 Spacer()
                 Button("取消") { store.showNewSheet = false }.keyboardShortcut(.cancelAction)
-                Button(links.count > 1 ? "下载 \(links.count) 项" : "下载") { VideoOptions.current = options; store.submitNewSheet() }
+                // 开着确认框时下一步是确认框（选位置、种子文件、视频画质）
+                Button(NewTaskPanels.ask ? "下一步" : links.count > 1 ? "下载 \(links.count) 项" : "下载") { store.submitNewSheet() }
                     .keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent).tint(Theme.tint)
                     .disabled(links.isEmpty)
             }

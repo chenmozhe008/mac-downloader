@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 import Foundation
 @preconcurrency import UserNotifications
 
@@ -66,6 +67,7 @@ final class DownloadStore: ObservableObject {
     private var noticeTimer: Task<Void, Never>?
     @Published var hoveredID: String?
     @Published var removalTarget: Item?          // 等待确认移除的任务
+    @Published var selectedID: String?           // 列表里单击选中的任务（高亮、键盘操作对象）
 
     let thumbs = Thumbnails()
     private var watcher: ClipboardWatcher?
@@ -209,38 +211,100 @@ final class DownloadStore: ObservableObject {
         return avg > 0 ? Double(left) / Double(avg) : .infinity
     }
 
+    /// 当前页面里按显示顺序排列的任务（键盘上下移动用）
+    var visibleItems: [Item] {
+        switch section {
+        case .active: activeItems
+        case .done: doneItems
+        case .category(let c): items(in: c).filter(\.isActive) + items(in: c).filter { !$0.isActive }
+        }
+    }
+
+    /// 双击 / 回车：下载中的暂停或继续，失败的重试，下完的打开
+    func primaryAction(_ item: Item) {
+        if item.fileGone { return }
+        if !item.isActive { open(item); return }
+        if case .failed = item.status { retry(item); return }
+        togglePause(item)
+    }
+
+    /// 键盘：↑↓ 选择，空格 / 回车 暂停继续（下完的打开），Delete 移除（先确认）
+    func handleKey(_ key: KeyEquivalent) -> Bool {
+        let list = visibleItems
+        guard !list.isEmpty else { return false }
+        let i = list.firstIndex { $0.id == selectedID }
+        switch key {
+        case .downArrow: selectedID = list[min((i ?? -1) + 1, list.count - 1)].id
+        case .upArrow: selectedID = list[max((i ?? list.count) - 1, 0)].id
+        case .space, .return: if let i { primaryAction(list[i]) } else { return false }
+        case .delete, .deleteForward: if let i { removalTarget = list[i] } else { return false }
+        default: return false
+        }
+        return true
+    }
+
     // MARK: 添加
 
     /// 粘贴、拖入、浏览器传来的都走这里；一段文字里有多个链接就逐个加
     func add(text: String) {
         let links = LinkKind.of(text) != nil ? [text.trimmingCharacters(in: .whitespacesAndNewlines)] : LinkKind.extract(from: text)
         guard !links.isEmpty else { notice = "没有识别到可下载的链接"; return }
-        links.forEach(add(link:))
+        request(links)
         section = .active
     }
 
     func add(link: String) { add(link: link, headers: [:], name: nil) }
 
-    /// headers/name 来自浏览器（Gopeed 扩展、LinkSwift 经网关传来），网盘直链靠它们鉴权
-    func add(link: String, headers: [String: String], name: String?) {
-        guard let kind = LinkKind.of(link) else { return }
-        seenClipboard.insert(link)
-        let key = Self.linkKey(link)
-        if let existing = items.first(where: { $0.linkKey == key }) {
-            notice = "「\(existing.title)」已在列表中"
-            return
+    /// headers/name 来自浏览器（自带扩展、LinkSwift 经网关传来），网盘直链靠它们鉴权
+    func add(link: String, headers: [String: String], name: String?) { request([link], headers: headers, name: name) }
+
+    /// 所有入口都走这里：去掉已在列表里的，再弹新建任务确认框（关掉询问时直接下载）
+    func request(_ links: [String], headers: [String: String] = [:], name: String? = nil) {
+        var fresh: [String] = []
+        for l in links where LinkKind.of(l) != nil {
+            seenClipboard.insert(l)
+            if let existing = items.first(where: { $0.linkKey == Self.linkKey(l) }) { notice = "「\(existing.title)」已在列表中"; continue }
+            if !fresh.contains(l) { fresh.append(l) }
         }
-        if kind != .videoSite, engineState != .running {
+        guard !fresh.isEmpty else { return }
+        if fresh.contains(where: { LinkKind.of($0) != .videoSite }), engineState != .running {
             notice = engineState == .missingDisk ? "移动硬盘未连接，接上后才能下载磁力、种子和直链" : "下载内核未运行"
             return
         }
-        let dir = Folders.directory(for: kind)
+        if NewTaskPanels.ask {
+            NewTaskPanels.shared.present(links: fresh, headers: headers, name: name, store: self)
+        } else {
+            fresh.forEach { start(link: $0, headers: headers, name: fresh.count == 1 ? name : nil) }
+        }
+    }
+
+    /// 确认框里预读文件名、大小、种子文件列表；网页上的种子先取回
+    func resolveForPanel(_ link: String, headers: [String: String]) async -> ResolvedResource? {
+        guard let kind = LinkKind.of(link) else { return nil }
+        var url = link
+        if kind == .torrentFile {
+            if link.lowercased().hasPrefix("http") {
+                guard let data = await Self.fetchTorrent(link) else { return nil }
+                url = "data:application/x-bittorrent;base64," + data.base64EncodedString()
+            } else { url = Self.torrentDataURL(link) ?? link }
+        }
+        return try? await host.client.resolve(url: url)
+    }
+
+    /// 真正开始下载。dir / selectFiles 来自确认框；不给就按默认规则（按类型存、种子只选正片）
+    func start(link: String, headers: [String: String] = [:], name: String? = nil, dir chosen: URL? = nil, selectFiles chosenFiles: [Int]? = nil) {
+        guard let kind = LinkKind.of(link) else { return }
+        let key = Self.linkKey(link)
+        if items.contains(where: { $0.linkKey == key }) { return }
+        let dir = chosen ?? Folders.directory(for: kind)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
 
         if kind == .videoSite {
             let job = VideoJob(url: link, title: link, site: VideoSiteRunner.siteName(link), options: VideoOptions.current)
             videoJobs.append(job); saveVideos(); rebuild()
-            videoRunner.start(job, into: Folders.videos) { [weak self] updated in
+            selectedID = job.id.uuidString
+            notice = "已添加：\(VideoSiteRunner.siteName(link)) 视频"
+            videoRunner.start(job, into: dir) { [weak self] updated in
                 Task { @MainActor in self?.updateVideo(updated) }
             }
             return
@@ -254,6 +318,8 @@ final class DownloadStore: ObservableObject {
                                    origin: kind == .magnet ? "磁力" : "种子文件", category: .movie, status: .resolving(Date()),
                                    downloaded: 0, total: 0, speed: 0, file: nil, createdAt: Date(), thumbRemote: nil, linkKey: key)
             pending.append(placeholder); rebuild()
+            selectedID = placeholder.id
+            notice = "已添加：\(placeholder.title)"
             Task {
                 // 网页上的种子链接：内核会把它当普通文件下载，先取回种子再按本地种子交给内核
                 var url = url
@@ -264,18 +330,25 @@ final class DownloadStore: ObservableObject {
                     }
                     url = "data:application/x-bittorrent;base64," + data.base64EncodedString()
                 }
-                let resolved = try? await host.client.resolve(url: url)
-                let select = resolved.flatMap { FileSelection.pick($0.files) }
+                let select: [Int]?
+                if let chosenFiles { select = chosenFiles } else {
+                    let resolved = try? await host.client.resolve(url: url)
+                    select = resolved.flatMap { FileSelection.pick($0.files) }
+                }
                 guard pending.contains(where: { $0.id == placeholder.id }) else { return }  // 解析期间被移除了
-                do { try await host.client.create(url: url, directory: dir.path, selectFiles: select) }
-                catch { notice = "添加失败：\(error.localizedDescription)" }
+                do {
+                    let id = try await host.client.create(url: url, directory: dir.path, selectFiles: select)
+                    if selectedID == placeholder.id { selectedID = id }
+                } catch { notice = "添加失败：\(error.localizedDescription)" }
                 pending.removeAll { $0.id == placeholder.id }
                 await poll()
             }
         } else {
             Task {
-                do { try await host.client.create(url: url, directory: dir.path, headers: headers, name: name) }
-                catch { notice = "添加失败：\(error.localizedDescription)" }
+                do {
+                    selectedID = try await host.client.create(url: url, directory: dir.path, headers: headers, name: name)
+                    notice = "已添加：\(name ?? Self.displayName(link))"
+                } catch { notice = "添加失败：\(error.localizedDescription)" }
                 await poll()
             }
         }
@@ -361,12 +434,12 @@ final class DownloadStore: ObservableObject {
 
     /// 剪贴板浮窗点「下载」
     func addFromPopup(_ links: [String]) {
-        links.forEach(add(link:))
+        request(links)
         section = .active
     }
 
     func acceptClipboard() {
-        clipboardLinks?.forEach(add(link:))
+        if let l = clipboardLinks { request(l) }
         clipboardLinks = nil
         section = .active
     }

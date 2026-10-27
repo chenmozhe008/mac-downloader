@@ -85,7 +85,10 @@ enum Folders {
     static func displayName(_ d: URL) -> String {
         if d == movies { return "移动硬盘 › movies" }
         if d == downloads { return "下载" }
-        return "下载 › " + d.lastPathComponent
+        if d.deletingLastPathComponent() == downloads { return "下载 › " + d.lastPathComponent }
+        let c = d.pathComponents
+        if c.count > 3, c[1] == "Volumes" { return c[2] + " › " + d.lastPathComponent }  // 其他硬盘：盘名 › 文件夹
+        return FileManager.default.displayName(atPath: d.path)
     }
 
     static func directory(for kind: LinkKind) -> URL {

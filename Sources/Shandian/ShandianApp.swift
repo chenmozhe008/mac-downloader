@@ -98,7 +98,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             for u in urls {
                 if u.scheme == "shandian" {
                     let links = URLComponents(url: u, resolvingAgainstBaseURL: false)?.queryItems?.filter { $0.name == "url" }.compactMap(\.value) ?? []
-                    links.forEach { store?.add(link: $0) }
+                    store?.request(links)
                 } else {
                     store?.add(link: u.isFileURL ? u.path : u.absoluteString)
                     NSApp.activate(ignoringOtherApps: true)
