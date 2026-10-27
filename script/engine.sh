@@ -1,9 +1,9 @@
 #!/bin/bash
 # engine.sh start|stop|status|configure —— 管理下载内核（Gopeed headless）
-# 内核与任务库在移动硬盘；只监听 127.0.0.1；token 读 App 配置 ~/Library/Application Support/ShandianDownload/engine.json
+# 内核与任务库在本机 Application Support（10-28 从移动硬盘挪来）；只监听 127.0.0.1；token 读 App 配置 ~/Library/Application Support/ShandianDownload/engine.json
 set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-ENGINE_DIR="/Volumes/Jack Feng/Applications/MacDownloader"
+ENGINE_DIR="$HOME/Library/Application Support/ShandianDownload/engine"  # 10-28 从移动硬盘挪到本机
 PORT=9999
 ENGINE_TOKEN=$(python3 -I -c 'import json,os;print(json.load(open(os.path.expanduser("~/Library/Application Support/ShandianDownload/engine.json")))["token"])')
 API="http://127.0.0.1:$PORT/api/v1"
@@ -11,7 +11,7 @@ api(){ curl -s -H "X-Api-Token: $ENGINE_TOKEN" "$@"; }
 
 case "$1" in
   start)
-    [ -x "$ENGINE_DIR/gopeed" ] || { echo "内核不在：$ENGINE_DIR（移动硬盘没插？）"; exit 1; }
+    [ -x "$ENGINE_DIR/gopeed" ] || { echo "内核不在：$ENGINE_DIR（先打开一次闪电下载，它会从移动硬盘拷过来）"; exit 1; }
     if api "$API/info" >/dev/null 2>&1 && api "$API/info" | grep -q '"code":0'; then echo "已在运行"; exit 0; fi
     mkdir -p "$ROOT/logs"
     cd "$ENGINE_DIR" && nohup ./gopeed -A 127.0.0.1 -P $PORT -T "$ENGINE_TOKEN" -d "$ENGINE_DIR/data" \

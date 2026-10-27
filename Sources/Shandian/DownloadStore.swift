@@ -1,4 +1,5 @@
 import AppKit
+import DiskArbitration
 import SwiftUI
 import Foundation
 @preconcurrency import UserNotifications
@@ -42,7 +43,7 @@ enum Pane: Hashable {
     }
 }
 
-enum EngineState: Equatable { case starting, running, missingDisk, failed(String) }
+enum EngineState: Equatable { case starting, running, failed(String) }
 
 @MainActor
 final class DownloadStore: ObservableObject {
@@ -93,8 +94,72 @@ final class DownloadStore: ObservableObject {
         ("aliyundrive", "阿里云盘"), ("alipan", "阿里云盘"), ("123pan", "123 云盘"), ("123684", "123 云盘"), ("189.cn", "天翼云盘"),
         ("ctyunxs", "天翼云盘"), ("139.com", "移动云盘"), ("uc.cn", "UC 网盘"), ("xunlei.com", "迅雷云盘")]
 
+    @Published private(set) var diskMounted = Folders.diskMounted
+    private var pausedForEject = Set<String>()
+
+    /// 推出硬盘：内核暂停后仍开着那块盘上的文件，盘会推不出。用 DiskArbitration 在系统批准推出前先处理：
+    /// 记下要续的任务 → 全部暂停 → 结束内核（文件随之关闭）→ 批准推出 → 2 秒后重启内核，不在这块盘上的任务接着下
+    private var daSession: DASession?
+
+    private func watchVolumes() {
+        let nc = NSWorkspace.shared.notificationCenter
+        for name in [NSWorkspace.didMountNotification, NSWorkspace.didUnmountNotification] {
+            nc.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.volumesChanged() }
+            }
+        }
+        guard let session = DASessionCreate(kCFAllocatorDefault) else { return }
+        daSession = session
+        let ctx = Unmanaged.passUnretained(self).toOpaque()
+        DARegisterDiskUnmountApprovalCallback(session, nil, { disk, ctx in
+            guard let ctx, let desc = DADiskCopyDescription(disk) as? [CFString: Any],
+                  let url = desc[kDADiskDescriptionVolumePathKey] as? URL else { return nil }
+            let store = Unmanaged<DownloadStore>.fromOpaque(ctx).takeUnretainedValue()
+            MainActor.assumeIsolated { store.releaseVolume(url.path) }
+            return nil   // 批准
+        }, ctx)
+        DASessionScheduleWithRunLoop(session, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
+    }
+
+    private func releaseVolume(_ vol: String) {
+        // 直接看内核开着哪些文件：任务删了、完成了，内核也可能还开着
+        // 刚启动、内核状态还没就绪时也要处理，只看内核实际开着的文件
+        guard host.holdsFiles(on: vol) else { return }
+        let running = engineItems.filter { $0.isActive && $0.status != .paused }
+        for i in running { if case .engine(let id) = i.source { pausedForEject.insert(id) } }
+        host.suspend()
+        host.kill()
+        engineState = .starting
+        notice = "已为推出硬盘暂停下载，硬盘插回后接着下"
+        Task {
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            await startEngine()
+            volumesChanged()   // 不在被推出的盘上的任务马上续
+        }
+    }
+
+    private func volumesChanged() {
+        diskMounted = Folders.diskMounted
+        guard !pausedForEject.isEmpty, engineState == .running else { return }
+        Task {
+            guard let tasks = try? await host.client.tasks() else { return }
+            for t in tasks where pausedForEject.contains(t.id) && Self.volumeAvailable(t.meta.opts?.path) {
+                try? await host.client.resume(t.id); pausedForEject.remove(t.id)
+            }
+        }
+    }
+
+    /// 路径所在的盘插着没有（本机路径总是在）
+    nonisolated static func volumeAvailable(_ path: String?) -> Bool {
+        guard let path else { return true }
+        let c = URL(fileURLWithPath: path).pathComponents
+        guard c.count > 2, c[1] == "Volumes" else { return true }
+        return FileManager.default.fileExists(atPath: "/Volumes/" + c[2])
+    }
+
     init() {
         loadVideos()
+        watchVolumes()
         Task { await boot() }
         watcher = ClipboardWatcher(store: self)
         gateway = Gateway(store: self); gateway?.start()
@@ -129,7 +194,7 @@ final class DownloadStore: ObservableObject {
         await host.client.forward(method: method, path: path, body: body)
     }
 
-    /// 退出时关内核，内核会把下载中的任务记成暂停；记下这些任务，下次启动接着下
+    /// 退出时暂停所有任务（内核不关），记下正在下的，下次打开接着下
     func shutdown() {
         let running = engineItems.filter { $0.isActive && $0.status != .paused }.compactMap { i -> String? in
             if case .engine(let id) = i.source { return id }; return nil
@@ -140,7 +205,7 @@ final class DownloadStore: ObservableObject {
         for i in engineItems where i.isActive { floor[i.id] = max(i.downloaded, checkFloor[i.id] ?? 0) }
         UserDefaults.standard.set(floor, forKey: "progressAtQuit")
         videoRunner.cancelAll()
-        host.stop()
+        host.suspend()
     }
 
     private func startEngine() async {
@@ -150,18 +215,19 @@ final class DownloadStore: ObservableObject {
         case .running:
             engineState = .running
             await host.client.applySettings(defaultDir: Folders.downloads.path)
-            for id in UserDefaults.standard.stringArray(forKey: "resumeOnLaunch") ?? [] { try? await host.client.resume(id) }
+            // 存在没插着的硬盘上的不续，等插上（diskMounted 通知）再续
+            let ids = UserDefaults.standard.stringArray(forKey: "resumeOnLaunch") ?? []
+            if let tasks = try? await host.client.tasks() {
+                for t in tasks where ids.contains(t.id) {
+                    if Self.volumeAvailable(t.meta.opts?.path) { try? await host.client.resume(t.id) } else { pausedForEject.insert(t.id) }
+                }
+            }
             UserDefaults.standard.removeObject(forKey: "resumeOnLaunch")
-        case .missingDisk: engineState = .missingDisk
         case .failed(let m): engineState = .failed(m)
         }
     }
 
     private func poll() async {
-        // 启动时硬盘没插，插上后自动拉起内核
-        if engineState == .missingDisk, FileManager.default.isExecutableFile(atPath: EngineConfig.binary.path) {
-            await startEngine()
-        }
         var firstLoad = false
         if engineState == .running, let tasks = try? await host.client.tasks() {
             firstLoad = !engineSeeded
@@ -312,7 +378,7 @@ final class DownloadStore: ObservableObject {
         }
         guard !fresh.isEmpty else { return }
         if fresh.contains(where: { LinkKind.of($0) != .videoSite }), engineState != .running {
-            notice = engineState == .missingDisk ? "移动硬盘未连接，接上后才能下载磁力、种子和直链" : "下载内核未运行"
+            notice = "下载内核未运行"
             return
         }
         if NewTaskPanels.ask {

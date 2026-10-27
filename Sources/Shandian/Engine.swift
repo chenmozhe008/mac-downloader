@@ -2,10 +2,13 @@ import Foundation
 
 /// 下载内核（Gopeed headless）的位置与鉴权。内核二进制和任务库在移动硬盘，token 在 App 配置目录。
 enum EngineConfig {
-    static let engineDir = URL(fileURLWithPath: "/Volumes/Jack Feng/Applications/MacDownloader")
-    static var binary: URL { engineDir.appendingPathComponent("gopeed") }
     static let supportDir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("ShandianDownload")
+    /// 内核放本机（10-28 用户同意从移动硬盘挪过来）：退出 App 时内核不关，放硬盘上会让硬盘推不出
+    static var engineDir: URL { supportDir.appendingPathComponent("engine") }
+    static var binary: URL { engineDir.appendingPathComponent("gopeed") }
+    /// 旧位置（移动硬盘），第一次启动新版时从这里拷内核和任务库过来；旧文件不删
+    static let legacyDir = URL(fileURLWithPath: "/Volumes/Jack Feng/Applications/MacDownloader")
     static var configFile: URL { supportDir.appendingPathComponent("engine.json") }
 
     struct Stored: Codable { var token: String; var port: Int }
@@ -146,11 +149,12 @@ final class EngineHost: @unchecked Sendable {
     lazy var client = EngineClient(stored: stored)
     private var process: Process?
 
-    enum StartResult { case running, missingDisk, failed(String) }
+    enum StartResult { case running, failed(String) }
 
     func start() async -> StartResult {
         if await client.isAlive() { return .running }
-        guard FileManager.default.isExecutableFile(atPath: EngineConfig.binary.path) else { return .missingDisk }
+        migrateFromDisk()
+        guard FileManager.default.isExecutableFile(atPath: EngineConfig.binary.path) else { return .failed("内核程序缺失") }
         let dataDir = EngineConfig.engineDir.appendingPathComponent("data")
         try? FileManager.default.createDirectory(at: dataDir, withIntermediateDirectories: true)
         let p = Process()
@@ -170,15 +174,62 @@ final class EngineHost: @unchecked Sendable {
         return .failed("内核没有响应")
     }
 
-    /// 先让内核把任务都暂停（暂停时会落盘保存进度），再结束进程。
-    /// 10-28《求救信号》重启内核后已下的 1.8 GB 没了，没能复现出原因；直接 SIGTERM 是唯一可疑的环节，先加这道保险
-    func stop() {
-        guard let process else { return }
+    /// 内核程序和任务库（gopeed.db、server.json）从移动硬盘拷到本机，只在本机还没有时做一次
+    private func migrateFromDisk() {
+        let fm = FileManager.default
+        let legacyBin = EngineConfig.legacyDir.appendingPathComponent("gopeed")
+        guard !fm.fileExists(atPath: EngineConfig.binary.path), fm.fileExists(atPath: legacyBin.path) else { return }
+        try? fm.createDirectory(at: EngineConfig.engineDir.appendingPathComponent("data"), withIntermediateDirectories: true)
+        for f in ["data/gopeed.db", "data/server.json"] {
+            let src = EngineConfig.legacyDir.appendingPathComponent(f)
+            if fm.fileExists(atPath: src.path) { try? fm.copyItem(at: src, to: EngineConfig.engineDir.appendingPathComponent(f)) }
+        }
+        try? fm.copyItem(at: legacyBin, to: EngineConfig.binary)
+    }
+
+    /// 内核进程有没有开着这块盘上的文件（lsof 只查内核一个进程，很快）
+    func holdsFiles(on volume: String) -> Bool {
+        let pg = Process()
+        pg.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
+        pg.arguments = ["-f", EngineConfig.binary.path]
+        let pipe = Pipe(); pg.standardOutput = pipe
+        try? pg.run(); pg.waitUntilExit()
+        let pids = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+            .split(separator: "\n").map(String.init) ?? []
+        guard !pids.isEmpty else { return false }
+        let ls = Process()
+        ls.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
+        ls.arguments = ["-Fn", "-p", pids.joined(separator: ",")]
+        let out = Pipe(); ls.standardOutput = out; ls.standardError = FileHandle.nullDevice
+        try? ls.run()
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        ls.waitUntilExit()
+        return String(decoding: data, as: UTF8.self).split(separator: "\n").contains { $0.hasPrefix("n" + volume + "/") }
+    }
+
+    /// 结束内核进程（不管是不是这次启动的），等它退出：推出硬盘前用，内核退了文件才关
+    func kill() {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
+        p.arguments = ["-f", EngineConfig.binary.path]
+        try? p.run(); p.waitUntilExit()
+        for _ in 0..<20 {
+            let check = Process()
+            check.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
+            check.arguments = ["-f", EngineConfig.binary.path]
+            check.standardOutput = FileHandle.nullDevice
+            try? check.run(); check.waitUntilExit()
+            if check.terminationStatus != 0 { return }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+    }
+
+    /// 退出 App 时只暂停任务，内核留着：内核一重启就要把没下完的部分整个重新校验（见 CLAUDE.md），
+    /// 留着它下次打开能直接接着下。暂停时内核会关掉文件，不挡移动硬盘推出
+    func suspend() {
         let done = DispatchSemaphore(value: 0)
         Task { try? await client.pauseAll(); done.signal() }
         _ = done.wait(timeout: .now() + 3)
-        Thread.sleep(forTimeInterval: 0.5)
-        process.terminate()
     }
 }
 
