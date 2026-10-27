@@ -80,7 +80,9 @@ final class DownloadStore: ObservableObject {
     private var pending: [Item] = []
     private var engineItems: [Item] = []
     private var lastStatus: [String: Item.Status] = [:]
+    private var engineSeeded = false   // 启动后第一次拿到内核任务列表之前，已完成的都是老任务，不发通知
     private var smoothSpeed: [String: Double] = [:]
+    private var autoRetries: [String: (count: Int, at: Date)] = [:]
     /// 退出时各 BT 任务已下的量；重启后低于它就是在校验
     private var checkFloor: [String: Int64] = (UserDefaults.standard.dictionary(forKey: "progressAtQuit") as? [String: Int64]) ?? [:]
     private var seenClipboard = Set<String>()
@@ -160,7 +162,9 @@ final class DownloadStore: ObservableObject {
         if engineState == .missingDisk, FileManager.default.isExecutableFile(atPath: EngineConfig.binary.path) {
             await startEngine()
         }
+        var firstLoad = false
         if engineState == .running, let tasks = try? await host.client.tasks() {
+            firstLoad = !engineSeeded
             engineItems = tasks.map(Self.item(from:))
             for k in engineItems.indices {
                 let id = engineItems[k].id
@@ -181,7 +185,9 @@ final class DownloadStore: ObservableObject {
         }
         smoothSpeed = next
         rebuild()
+        if firstLoad { engineSeeded = true }
         sleepGuard.update(downloading: items.contains { $0.status == .running })
+        autoRetry()
         let total = items.reduce(Int64(0)) { $0 + ($1.isActive ? $1.speed : 0) }
         speedHistory.append(Double(total)); speedHistory.removeFirst(speedHistory.count - 60)
     }
@@ -194,7 +200,8 @@ final class DownloadStore: ObservableObject {
             all[k].avgSpeed = Int64(smoothSpeed[all[k].id] ?? 0)
             if !all[k].isActive, let f = all[k].location ?? all[k].file { all[k].fileGone = Self.isGone(f) }
         }
-        for i in all where lastStatus[i.id] != nil && lastStatus[i.id] != .done && i.status == .done { didFinish(i) }
+        // 从未完成变成完成；小文件一个轮询周期就下完，第一次出现就是完成的也算（启动时已有的老任务除外）
+        for i in all where i.status == .done && (lastStatus[i.id].map { $0 != .done } ?? engineSeeded) { didFinish(i) }
         for i in all { lastStatus[i.id] = i.status }
         for i in all where i.category == .movie || i.category == .other {
             if let f = i.file, FileSelection.videoExt.contains(f.pathExtension.lowercased()) {
@@ -203,6 +210,17 @@ final class DownloadStore: ObservableObject {
         }
         for i in all where i.thumbRemote != nil { thumbs.requestRemote(id: i.id, url: i.thumbRemote) }
         if all != items { items = all }
+    }
+
+    /// 内核任务失败（断网、服务器临时出错）自动重试，间隔 30 秒、最多 3 次；还不行就留给用户手动重试
+    private func autoRetry() {
+        for i in engineItems {
+            guard case .failed = i.status, case .engine(let id) = i.source else { continue }
+            let r = autoRetries[i.id] ?? (0, .distantPast)
+            guard r.count < 3, Date().timeIntervalSince(r.at) > 30 else { continue }
+            autoRetries[i.id] = (r.count + 1, Date())
+            Task { try? await host.client.resume(id) }
+        }
     }
 
     /// 文件不在了才算；所在的移动硬盘没插上时不算，免得一拔硬盘满屏「已删除」
@@ -472,6 +490,16 @@ final class DownloadStore: ObservableObject {
 
     // MARK: 完成通知
 
+    static let doneCategory = "done"
+
+    /// 通知上带「打开」「在访达中显示」两个按钮（AppDelegate 里处理点击）
+    static func registerNotificationActions() {
+        let open = UNNotificationAction(identifier: "open", title: "打开", options: [])
+        let reveal = UNNotificationAction(identifier: "reveal", title: "在访达中显示", options: [])
+        UNUserNotificationCenter.current().setNotificationCategories(
+            [UNNotificationCategory(identifier: doneCategory, actions: [open, reveal], intentIdentifiers: [])])
+    }
+
     private func didFinish(_ item: Item) {
         guard Prefs.notify else { return }
         let center = UNUserNotificationCenter.current()
@@ -480,6 +508,9 @@ final class DownloadStore: ObservableObject {
             let c = UNMutableNotificationContent()
             c.title = "下载完成"
             c.body = item.title
+            c.sound = .default
+            c.categoryIdentifier = Self.doneCategory
+            if let f = item.file { c.userInfo = ["path": f.path] }
             center.add(UNNotificationRequest(identifier: item.id, content: c, trigger: nil))
         }
     }

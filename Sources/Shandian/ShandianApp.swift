@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+@preconcurrency import UserNotifications
 
 @main
 struct ShandianApp: App {
@@ -71,7 +72,7 @@ private struct AboutMenuButton: View {
     }
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     weak var store: DownloadStore?
 
     private var keyMonitor: Any?
@@ -80,6 +81,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// 窗口里任何地方按 ⌘V 都能下载；焦点在输入框（搜索、新建下载）时照常粘贴文字
     func applicationDidFinishLaunching(_ notification: Notification) {
+        UNUserNotificationCenter.current().delegate = self
+        DownloadStore.registerNotificationActions()
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
                   event.charactersIgnoringModifiers == "v",
@@ -89,6 +92,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             MainActor.assumeIsolated { self?.store?.add(text: text) }
             return nil
         }
+    }
+
+    /// 完成通知：点「打开」打开文件，「在访达中显示」定位文件，点通知本身打开主窗口
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
+        let path = response.notification.request.content.userInfo["path"] as? String
+        let action = response.actionIdentifier
+        await MainActor.run {
+            guard let path, FileManager.default.fileExists(atPath: path) else { NSApp.activate(ignoringOtherApps: true); return }
+            let url = URL(fileURLWithPath: path)
+            switch action {
+            case "open": NSWorkspace.shared.open(url)
+            case "reveal": NSWorkspace.shared.activateFileViewerSelecting([url])
+            default: NSApp.activate(ignoringOtherApps: true)
+            }
+        }
+    }
+
+    /// App 在前台时也显示通知
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
+        [.banner, .sound]
     }
 
     func applicationWillTerminate(_ notification: Notification) {
