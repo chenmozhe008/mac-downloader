@@ -1,0 +1,428 @@
+import AppKit
+import Foundation
+@preconcurrency import UserNotifications
+
+/// 界面上的一条下载，内核任务和视频站任务统一成这一种
+struct Item: Identifiable, Equatable {
+    enum Source: Equatable { case engine(String), video(UUID), pending }
+    enum Status: Equatable { case resolving(Date), running, waiting, paused, done, failed(String) }
+
+    var id: String
+    var source: Source
+    var title: String
+    var rawTitle: String        // 原始发布名，悬停时显示
+    var origin: String          // 磁力 / 种子文件 / B 站 / 夸克网盘 / 域名
+    var category: Category
+    var status: Status
+    var downloaded: Int64
+    var total: Int64
+    var speed: Int64
+    var file: URL?              // 主文件（截图、打开都用它）
+    var createdAt: Date
+    var thumbRemote: String?
+    var linkKey: String         // 去重用：磁力 hash 或原始链接
+    var location: URL? = nil    // 移到废纸篓时扔这个：多文件种子是整个文件夹，其余同 file
+
+    var progress: Double { total > 0 ? min(1, Double(downloaded) / Double(total)) : 0 }
+    var isActive: Bool { if case .done = status { return false }; return true }
+}
+
+enum Pane: Hashable {
+    case active, done, category(Category)
+    var title: String {
+        switch self {
+        case .active: "正在下载"
+        case .done: "已完成"
+        case .category(let c): c.rawValue
+        }
+    }
+}
+
+enum EngineState: Equatable { case starting, running, missingDisk, failed(String) }
+
+@MainActor
+final class DownloadStore: ObservableObject {
+    @Published private(set) var items: [Item] = []
+    @Published private(set) var speedHistory: [Double] = Array(repeating: 0, count: 60)
+    @Published private(set) var engineState: EngineState = .starting
+    @Published var section: Pane = .active
+    @Published var search = ""
+    @Published var showNewSheet = false
+    @Published var newLinksText = ""
+    @Published var clipboardLink: String?        // 剪贴板里发现的新链接
+    @Published var notice: String?               // 顶部一行提示（重复链接、失败原因）
+    @Published var hoveredID: String?
+
+    let thumbs = Thumbnails()
+    private let host = EngineHost()
+    private let videoRunner = VideoSiteRunner()
+    private var videoJobs: [VideoJob] = []
+    private var pending: [Item] = []
+    private var engineItems: [Item] = []
+    private var lastStatus: [String: Item.Status] = [:]
+    private var seenClipboard = Set<String>()
+    private var pollTask: Task<Void, Never>?
+    private let videosFile = EngineConfig.supportDir.appendingPathComponent("videos.json")
+
+    static let panHosts: [(String, String)] = [("baidupcs.com", "百度网盘"), ("baidu.com", "百度网盘"), ("quark.cn", "夸克网盘"),
+        ("aliyundrive", "阿里云盘"), ("alipan", "阿里云盘"), ("123pan", "123 云盘"), ("123684", "123 云盘"), ("189.cn", "天翼云盘"),
+        ("ctyunxs", "天翼云盘"), ("139.com", "移动云盘"), ("uc.cn", "UC 网盘"), ("xunlei.com", "迅雷云盘")]
+
+    init() {
+        loadVideos()
+        Task { await boot() }
+        Task.detached { await YtDlp.ensureFresh() }
+        NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.checkClipboard() }
+        }
+    }
+
+    // MARK: 启动与轮询
+
+    func boot() async {
+        await startEngine()
+        pollTask?.cancel()
+        pollTask = Task { [weak self] in
+            while !Task.isCancelled {
+                await self?.poll()
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+            }
+        }
+    }
+
+    func shutdown() {
+        videoRunner.cancelAll()
+        host.stop()
+    }
+
+    private func startEngine() async {
+        engineState = .starting
+        switch await host.start() {
+        case .running:
+            engineState = .running
+            await host.client.applySettings(defaultDir: Folders.downloads.path)
+        case .missingDisk: engineState = .missingDisk
+        case .failed(let m): engineState = .failed(m)
+        }
+    }
+
+    private func poll() async {
+        // 启动时硬盘没插，插上后自动拉起内核
+        if engineState == .missingDisk, FileManager.default.isExecutableFile(atPath: EngineConfig.binary.path) {
+            await startEngine()
+        }
+        if engineState == .running, let tasks = try? await host.client.tasks() {
+            engineItems = tasks.map(Self.item(from:))
+        }
+        rebuild()
+        let total = items.reduce(Int64(0)) { $0 + ($1.isActive ? $1.speed : 0) }
+        speedHistory.append(Double(total)); speedHistory.removeFirst(speedHistory.count - 60)
+    }
+
+    private func rebuild() {
+        let videos = videoJobs.map(Self.item(from:))
+        var all = pending + engineItems + videos
+        all.sort { $0.createdAt > $1.createdAt }
+        for i in all where lastStatus[i.id] != nil && lastStatus[i.id] != .done && i.status == .done { didFinish(i) }
+        for i in all { lastStatus[i.id] = i.status }
+        for i in all where i.category == .movie || i.category == .other {
+            if let f = i.file, FileSelection.videoExt.contains(f.pathExtension.lowercased()) {
+                thumbs.requestFrame(id: i.id, video: f, progress: i.progress)
+            }
+        }
+        for i in all where i.thumbRemote != nil { thumbs.requestRemote(id: i.id, url: i.thumbRemote) }
+        if all != items { items = all }
+    }
+
+    // MARK: 视图用
+
+    var totalSpeed: Int64 { items.reduce(0) { $0 + ($1.isActive ? $1.speed : 0) } }
+    var activeItems: [Item] { filtered(items.filter(\.isActive)) }
+    var doneItems: [Item] { filtered(items.filter { !$0.isActive }) }
+    func items(in c: Category) -> [Item] { filtered(items.filter { $0.category == c }) }
+    func count(_ s: Pane) -> Int {
+        switch s {
+        case .active: items.filter(\.isActive).count
+        case .done: items.filter { !$0.isActive }.count
+        case .category(let c): items.filter { $0.category == c }.count
+        }
+    }
+    private func filtered(_ list: [Item]) -> [Item] {
+        let q = search.trimmingCharacters(in: .whitespaces)
+        return q.isEmpty ? list : list.filter { $0.title.localizedCaseInsensitiveContains(q) }
+    }
+
+    /// 剩余时间按最近 5 秒的平均速度估，不跟着瞬时速度乱跳
+    var etaAll: Double {
+        let left = items.filter(\.isActive).reduce(Int64(0)) { $0 + max(0, $1.total - $1.downloaded) }
+        let avg = speedHistory.suffix(5).reduce(0, +) / 5
+        return avg > 0 ? Double(left) / avg : .infinity
+    }
+
+    // MARK: 添加
+
+    /// 粘贴、拖入、浏览器传来的都走这里；一段文字里有多个链接就逐个加
+    func add(text: String) {
+        let links = LinkKind.of(text) != nil ? [text.trimmingCharacters(in: .whitespacesAndNewlines)] : LinkKind.extract(from: text)
+        guard !links.isEmpty else { notice = "没有识别到可下载的链接"; return }
+        links.forEach(add(link:))
+        section = .active
+    }
+
+    func add(link: String) {
+        guard let kind = LinkKind.of(link) else { return }
+        seenClipboard.insert(link)
+        let key = Self.linkKey(link)
+        if let existing = items.first(where: { $0.linkKey == key }) {
+            notice = "「\(existing.title)」已在列表中"
+            return
+        }
+        if kind != .videoSite, engineState != .running {
+            notice = engineState == .missingDisk ? "移动硬盘未连接，接上后才能下载磁力、种子和直链" : "下载内核未运行"
+            return
+        }
+        let dir = Folders.directory(for: kind)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+
+        if kind == .videoSite {
+            let job = VideoJob(url: link, title: link, site: VideoSiteRunner.siteName(link))
+            videoJobs.append(job); saveVideos(); rebuild()
+            videoRunner.start(job, into: Folders.videos) { [weak self] updated in
+                Task { @MainActor in self?.updateVideo(updated) }
+            }
+            return
+        }
+
+        let url = kind == .torrentFile ? Self.torrentDataURL(link) ?? link : link
+        if kind == .magnet || kind == .torrentFile {
+            // 先解析文件列表，只勾主视频和字幕；磁力要先从网络拿到种子信息
+            let placeholder = Item(id: "pending-" + UUID().uuidString, source: .pending, title: PrettyTitle.clean(Self.displayName(link)), rawTitle: Self.displayName(link),
+                                   origin: kind == .magnet ? "磁力" : "种子文件", category: .movie, status: .resolving(Date()),
+                                   downloaded: 0, total: 0, speed: 0, file: nil, createdAt: Date(), thumbRemote: nil, linkKey: key)
+            pending.append(placeholder); rebuild()
+            Task {
+                let resolved = try? await host.client.resolve(url: url)
+                let select = resolved.flatMap { FileSelection.pick($0.files) }
+                guard pending.contains(where: { $0.id == placeholder.id }) else { return }  // 解析期间被移除了
+                do { try await host.client.create(url: url, directory: dir.path, selectFiles: select) }
+                catch { notice = "添加失败：\(error.localizedDescription)" }
+                pending.removeAll { $0.id == placeholder.id }
+                await poll()
+            }
+        } else {
+            Task {
+                do { try await host.client.create(url: url, directory: dir.path) }
+                catch { notice = "添加失败：\(error.localizedDescription)" }
+                await poll()
+            }
+        }
+    }
+
+    func submitNewSheet() {
+        let text = newLinksText
+        newLinksText = ""; showNewSheet = false
+        add(text: text)
+    }
+
+    // MARK: 操作
+
+    func togglePause(_ item: Item) {
+        guard case .engine(let id) = item.source else { return }
+        Task {
+            if item.status == .paused || { if case .failed = item.status { return true }; return false }() {
+                try? await host.client.resume(id)
+            } else { try? await host.client.pause(id) }
+            await poll()
+        }
+    }
+
+    var allPaused: Bool { !items.contains { $0.status == .running || $0.status == .waiting } }
+
+    func toggleAll() {
+        Task {
+            if allPaused { try? await host.client.resumeAll() } else { try? await host.client.pauseAll() }
+            await poll()
+        }
+    }
+
+    /// 移除任务；moveFiles 为真时把文件移到废纸篓（不直接删除）
+    func remove(_ item: Item, moveFiles: Bool) {
+        let file = item.location ?? item.file
+        switch item.source {
+        case .engine(let id):
+            Task {
+                try? await host.client.delete(id, withFiles: false)
+                if moveFiles, let f = file { Self.trash(f) }
+                await poll()
+            }
+        case .video(let id):
+            videoRunner.cancel(id)
+            videoJobs.removeAll { $0.id == id }; saveVideos()
+            if moveFiles, let f = file { Self.trash(f) }
+            rebuild()
+        case .pending:
+            pending.removeAll { $0.id == item.id }; rebuild()
+        }
+    }
+
+    func reveal(_ item: Item) {
+        guard let f = item.file else { return }
+        if FileManager.default.fileExists(atPath: f.path) { NSWorkspace.shared.activateFileViewerSelecting([f]) }
+        else { NSWorkspace.shared.open(f.deletingLastPathComponent()) }
+    }
+
+    func open(_ item: Item) {
+        guard let f = item.file, FileManager.default.fileExists(atPath: f.path) else { reveal(item); return }
+        NSWorkspace.shared.open(f)
+    }
+
+    // MARK: 剪贴板
+
+    func checkClipboard() {
+        guard let s = NSPasteboard.general.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              s.count < 4000, let link = LinkKind.extract(from: s).first ?? (LinkKind.of(s) != nil ? s : nil),
+              !seenClipboard.contains(link), !items.contains(where: { $0.linkKey == Self.linkKey(link) }) else { return }
+        seenClipboard.insert(link)
+        clipboardLink = link
+    }
+
+    func acceptClipboard() {
+        if let l = clipboardLink { add(link: l) }
+        clipboardLink = nil
+    }
+
+    // MARK: 完成通知
+
+    private func didFinish(_ item: Item) {
+        let center = UNUserNotificationCenter.current()
+        center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+            guard granted else { return }
+            let c = UNMutableNotificationContent()
+            c.title = "下载完成"
+            c.body = item.title
+            center.add(UNNotificationRequest(identifier: item.id, content: c, trigger: nil))
+        }
+    }
+
+    // MARK: 视频站记录
+
+    private func updateVideo(_ job: VideoJob) {
+        guard let i = videoJobs.firstIndex(where: { $0.id == job.id }) else { return }
+        videoJobs[i] = job
+        if job.state != .running { saveVideos() }
+        rebuild()
+    }
+
+    private func loadVideos() {
+        guard let data = try? Data(contentsOf: videosFile),
+              let list = try? JSONDecoder().decode([VideoJob].self, from: data) else { return }
+        // 上次没下完的进程已经不在了，标成失败让用户重试
+        videoJobs = list.map { var j = $0; if j.state == .running { j.state = .failed; j.error = "上次未完成"; j.speed = 0 }; return j }
+    }
+
+    private func saveVideos() {
+        if let data = try? JSONEncoder().encode(videoJobs) { try? data.write(to: videosFile) }
+    }
+
+    func retry(_ item: Item) {
+        switch item.source {
+        case .video(let id):
+            // 原地重新开始；先删再 add 会被去重挡掉，任务直接消失
+            guard let i = videoJobs.firstIndex(where: { $0.id == id }) else { return }
+            videoJobs[i].state = .running; videoJobs[i].error = nil
+            videoJobs[i].downloaded = 0; videoJobs[i].total = 0; videoJobs[i].speed = 0
+            saveVideos(); rebuild()
+            videoRunner.start(videoJobs[i], into: Folders.videos) { [weak self] updated in
+                Task { @MainActor in self?.updateVideo(updated) }
+            }
+        case .engine: togglePause(item)
+        case .pending: break
+        }
+    }
+
+    // MARK: 映射
+
+    private static func item(from t: EngineTask) -> Item {
+        let url = t.meta.req.url
+        let dir = URL(fileURLWithPath: t.meta.opts?.path ?? Folders.downloads.path)
+        let files = t.meta.res?.files ?? []
+        let selected = (t.meta.opts?.selectFiles?.isEmpty == false ? t.meta.opts!.selectFiles! : Array(files.indices)).filter { $0 < files.count }
+        let total = selected.isEmpty ? (t.meta.res?.size ?? 0) : selected.reduce(Int64(0)) { $0 + files[$1].size }
+        let resName = t.meta.res?.name ?? ""
+
+        // 主文件：选中文件里最大的那个
+        var main: URL?
+        if let idx = selected.max(by: { files[$0].size < files[$1].size }) {
+            let f = files[idx]
+            let rel = [f.path ?? "", f.name].filter { !$0.isEmpty }.joined(separator: "/")
+            let candidates = [dir.appendingPathComponent(resName).appendingPathComponent(rel), dir.appendingPathComponent(rel)]
+            main = candidates.first { FileManager.default.fileExists(atPath: $0.path) } ?? (files.count > 1 ? candidates[0] : candidates[1])
+        } else if !resName.isEmpty { main = dir.appendingPathComponent(resName) }
+        let location = files.count > 1 && !resName.isEmpty ? dir.appendingPathComponent(resName) : main
+
+        let lower = url.lowercased()
+        let host = URL(string: url)?.host?.lowercased() ?? ""
+        let pan = lower.hasPrefix("http") ? panHosts.first { host.contains($0.0) }?.1 : nil
+        let origin: String = lower.hasPrefix("magnet:") ? "磁力" : lower.hasPrefix("data:") ? "种子文件"
+            : lower.hasPrefix("ed2k:") ? "ed2k" : pan ?? host
+        let isVideo = main.map { FileSelection.videoExt.contains($0.pathExtension.lowercased()) } ?? false
+        let category: Category = pan != nil ? .cloud : (t.protocol == "bt" || lower.hasPrefix("ed2k:") || isVideo) ? .movie : .other
+
+        let status: Item.Status = switch t.status {
+        case "running": .running
+        case "pause": .paused
+        case "done": .done
+        case "error": .failed("下载出错")
+        default: .waiting
+        }
+        let created = ISO8601DateFormatter.flexible.date(from: t.createdAt ?? "") ?? .distantPast
+        let rawTitle = t.name?.isEmpty == false ? t.name! : resName.isEmpty ? displayName(url) : resName
+        return Item(id: t.id, source: .engine(t.id), title: PrettyTitle.clean(rawTitle), rawTitle: rawTitle,
+                    origin: origin, category: category, status: status, downloaded: min(t.progress.downloaded, max(total, t.progress.downloaded)),
+                    total: total, speed: status == .running ? t.progress.speed : 0, file: main, createdAt: created, thumbRemote: nil,
+                    linkKey: linkKey(lower.hasPrefix("magnet:") || t.meta.res?.hash == nil ? url : "btih:" + (t.meta.res?.hash ?? "")),
+                    location: location)
+    }
+
+    private static func item(from j: VideoJob) -> Item {
+        let status: Item.Status = switch j.state {
+        case .running: .running
+        case .done: .done
+        case .failed: .failed(j.error ?? "下载失败")
+        }
+        return Item(id: j.id.uuidString, source: .video(j.id), title: j.title != j.url ? j.title : j.state == .running ? "正在读取视频信息" : displayName(j.url), rawTitle: j.title,
+                    origin: j.site, category: .video, status: status, downloaded: j.downloaded, total: j.total, speed: j.speed,
+                    file: j.filePath.map { URL(fileURLWithPath: $0) }, createdAt: j.createdAt, thumbRemote: j.thumbnailURL,
+                    linkKey: linkKey(j.url))
+    }
+
+    /// 磁力按 hash 去重（同一资源不同 tracker 参数算同一个）
+    static func linkKey(_ link: String) -> String {
+        let l = link.lowercased()
+        if let r = l.range(of: "btih:") { return "btih:" + l[r.upperBound...].prefix(40) }
+        return l
+    }
+
+    static func displayName(_ link: String) -> String {
+        if let comps = URLComponents(string: link), let dn = comps.queryItems?.first(where: { $0.name == "dn" })?.value, !dn.isEmpty { return dn }
+        if link.lowercased().hasSuffix(".torrent") { return (link as NSString).lastPathComponent.replacingOccurrences(of: ".torrent", with: "") }
+        return URL(string: link)?.lastPathComponent.removingPercentEncoding ?? link
+    }
+
+    static func torrentDataURL(_ path: String) -> String? {
+        guard let d = FileManager.default.contents(atPath: path) else { return nil }
+        return "data:application/x-bittorrent;base64," + d.base64EncodedString()
+    }
+
+    static func trash(_ url: URL) {
+        NSWorkspace.shared.recycle([url]) { _, _ in }
+    }
+}
+
+extension ISO8601DateFormatter {
+    nonisolated(unsafe) static let flexible: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+}

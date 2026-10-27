@@ -1,11 +1,11 @@
 #!/bin/bash
 # engine.sh start|stop|status|configure —— 管理下载内核（Gopeed headless）
-# 内核与任务库在移动硬盘；只监听 127.0.0.1；token 读项目 .env
+# 内核与任务库在移动硬盘；只监听 127.0.0.1；token 读 App 配置 ~/Library/Application Support/ShandianDownload/engine.json
 set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ENGINE_DIR="/Volumes/Jack Feng/Applications/MacDownloader"
 PORT=9999
-source "$ROOT/.env"
+ENGINE_TOKEN=$(python3 -I -c 'import json,os;print(json.load(open(os.path.expanduser("~/Library/Application Support/ShandianDownload/engine.json")))["token"])')
 API="http://127.0.0.1:$PORT/api/v1"
 api(){ curl -s -H "X-Api-Token: $ENGINE_TOKEN" "$@"; }
 

@@ -1,21 +1,32 @@
-# mac-downloader（工作名，正式名待定）
+# 闪电下载（mac-downloader）
+
+> App 名「闪电下载」（10-27 用户定：先叫这个，后面再改），可执行名 `Shandian`，bundle id `io.github.chenmozhe008.shandian`
 
 自用 Mac 下载器，目标是替代迅雷：磁力/BT/ed2k/HTTP + 视频网站 + 网盘直链，一个客户端搞定，浏览器一点就下。
 方案与阶段：`docs/PLAN.md`（P0 规则 → P1 引擎 → P2 界面 → P3 浏览器与网盘 → P4 切换）。
 
 ## 架构（不自己写下载引擎）
 
-- **内核**：Gopeed headless（`gopeed-web` v1.9.3 arm64），REST API `127.0.0.1:9999`，请求头 `X-Api-Token`，token 在项目 `.env` 的 `ENGINE_TOKEN`（永不入 git）
+- **内核**：Gopeed headless（`gopeed-web` v1.9.3 arm64），REST API `127.0.0.1:9999`，请求头 `X-Api-Token`；token 由 App 首次运行生成，存 `~/Library/Application Support/ShandianDownload/engine.json`（600 权限，不在仓库里），脚本也读这里
+  - App 启动时自己拉起内核、退出时关掉；硬盘后插上会自动拉起
   - 内核二进制和任务库在移动硬盘 `/Volumes/Jack Feng/Applications/MacDownloader/`（用户要求装在硬盘）；硬盘没插时内核起不来，脚本会直接报出来
   - 只监听 127.0.0.1，不开 0.0.0.0
-- **视频网站**：yt-dlp + ffmpeg（brew 已装），走代理 7897
+- **视频网站**：yt-dlp + ffmpeg，走代理 7897。**yt-dlp 用 App 自带的**（`Application Support/ShandianDownload/bin/yt-dlp`，首次启动下载官方 `yt-dlp_macos`、每 7 天 `-U`），brew 里的只做兜底——视频站改版快，10-27 实测 brew 的 2025-04 版下 B 站 412
+  - 选格式 `-S res,vcodec:h264,acodec:aac`：默认会挑体积最小的 AV1（实测拿到 480P AV1），剪辑软件兼容差
 - **网盘**：浏览器里的 LinkSwift 油猴脚本拿直链 → 交给内核。**只装 Greasy Fork 上 hmjz100 的版本**；GitHub `Mario82del/LinkSwift` 发安装包，疑似冒名，别碰
-- 客户端界面（P2）：原生 SwiftUI，技术约定沿用小清（`Coding Project/mac-cleanup-manager/CLAUDE.md`）：本机 SwiftUI 宏编译不过，状态放 `ObservableObject @Published`；文案像专业 Mac 软件
+- 客户端界面（P2）：原生 SwiftUI，`NavigationSplitView` 系统侧栏 + 系统工具栏/搜索框（10-27 用户嫌手搓侧栏和红绿灯对不齐，别再手工画侧栏）；侧栏顶部 App 图标+名字，技术约定沿用小清（`Coding Project/mac-cleanup-manager/CLAUDE.md`）：本机 SwiftUI 宏编译不过，状态放 `ObservableObject @Published`；文案像专业 Mac 软件
+
+## 版本与更新记录（沿用小清）
+
+- 版本号在 `script/build_app.sh` 的 `APP_VERSION`，构建号取 git 提交数。修问题升第三位，加功能升第二位
+- 每次升版本在 `CHANGELOG.md` 顶部加一节；打包时拷进 App，「关于闪电下载 → 更新记录」直接读它，别另写一份。写法按正式更新说明（短句、陈述事实，不写口语）
+- 「关于 → 介绍」的优势卡在 `AboutView.swift` 的 `IntroPage`，只写实测过的数据（下面「测速记录」），竞品只写查证过的事实
 
 ## 脚本
 
 - `script/engine.sh start|stop|status|configure`：启停内核；`configure` 写下载设置（每次内核重装/任务库重建后跑一次）
 - `script/dl.sh "<链接或本地.torrent>"`：统一入口，自动分流
+- `script/build_app.sh [run|package]`：编译打包成 `dist/闪电下载.app`
 
 ## 下载设置（`configure` 写入，改值先改这里的说明）
 
@@ -36,7 +47,8 @@
 
 ## 已知事项
 
-- B 站不登录只有 480P；要高清需 `--cookies-from-browser`（P2/P3 再接）
+- 视频站实测（10-27，最新 yt-dlp）：B 站不登录 1080P ✅、微博 1080P ✅；抖音要「新鲜 cookie」，匿名 ttwid 也 403 ❌；小红书 yt-dlp 自带测试笔记拿不到视频 ❌（待用真实链接复测）。B 站 1080P+/4K 要登录 cookie
+- lux（iawia002/lux）最后发版 2024-05，抖音/小红书失效、B 站只有 480P，不用
 - Gopeed API 新建任务参数是 `opts`（不是 `opt`），写错不报错、路径静默失效
 - `download-movie` skill 暂不改（用户 10-27 说：测稳了再改）
 
