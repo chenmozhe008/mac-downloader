@@ -36,6 +36,7 @@
 | 代理 | 开，`127.0.0.1:7897`（Clash 规则模式，国内仍直连） | 海外源/网页种子被墙，实测这是比迅雷快的主因 |
 | HTTP 连接数 | 8 | 清华/中科大/华为云镜像对 16 线程回 403/418（10-27 实测被封） |
 | BT 监听端口 | 6881 固定 | 默认随机端口不利于被连入 |
+| HTTP User-Agent | `ShandianDownload/<版本>`，不冒充浏览器（`EngineClient.userAgent`） | Go 的 TLS 握手配 Chrome UA 被中科大等镜像识别为伪装爬虫 403，Chrome 116/141 都拦，如实写工具名才放行（10-27 实测）；要浏览器身份的下载由插件带真实 UA/Cookie |
 | tracker | 每次 configure 从 trackerslist.com + ngosang 合并拉取 | headless 内核没有桌面版的 tracker 订阅，空列表时磁力解析很慢 |
 
 ## 测速记录

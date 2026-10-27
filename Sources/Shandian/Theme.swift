@@ -23,6 +23,7 @@ enum Theme {
     static let faint = Color.adaptive(light: rgb(0, 0, 0, 0.045), dark: rgb(255, 255, 255, 0.06))
     static let track = Color.adaptive(light: rgb(0, 0, 0, 0.07), dark: rgb(255, 255, 255, 0.10))
     static let glow = Color.adaptive(light: rgb(232, 154, 0, 0.13), dark: rgb(255, 181, 38, 0.14))
+    static let raised = Color.adaptive(light: rgb(255, 255, 255), dark: rgb(44, 44, 47))   // 卡片
     static let failed = Color.adaptive(light: rgb(215, 58, 46), dark: rgb(255, 105, 97))
 }
 
@@ -51,9 +52,9 @@ struct CircleIconButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(Theme.text.opacity(0.75))
-                .frame(width: 28, height: 28)
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(Theme.text.opacity(0.8))
+                .frame(width: 34, height: 34)
                 .background(Circle().fill(Theme.faint))
         }
         .buttonStyle(.plain)

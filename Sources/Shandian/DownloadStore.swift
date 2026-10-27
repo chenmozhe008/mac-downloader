@@ -49,11 +49,25 @@ final class DownloadStore: ObservableObject {
     @Published var search = ""
     @Published var showNewSheet = false
     @Published var newLinksText = ""
-    @Published var clipboardLink: String?        // 剪贴板里发现的新链接
-    @Published var notice: String?               // 顶部一行提示（重复链接、失败原因）
+    @Published var clipboardLinks: [String]?     // 剪贴板里发现的新链接（一段文字里可能有多个）
+    /// 顶部一行提示（重复链接、失败原因），6 秒后自动收起
+    @Published var notice: String? {
+        didSet {
+            noticeTimer?.cancel()
+            guard notice != nil else { return }
+            noticeTimer = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 6_000_000_000)
+                if !Task.isCancelled { self?.notice = nil }
+            }
+        }
+    }
+    private var noticeTimer: Task<Void, Never>?
     @Published var hoveredID: String?
+    @Published var removalTarget: Item?          // 等待确认移除的任务
 
     let thumbs = Thumbnails()
+    private var watcher: ClipboardWatcher?
+    private var gateway: Gateway?
     private let host = EngineHost()
     private let videoRunner = VideoSiteRunner()
     private var videoJobs: [VideoJob] = []
@@ -64,13 +78,15 @@ final class DownloadStore: ObservableObject {
     private var pollTask: Task<Void, Never>?
     private let videosFile = EngineConfig.supportDir.appendingPathComponent("videos.json")
 
-    static let panHosts: [(String, String)] = [("baidupcs.com", "百度网盘"), ("baidu.com", "百度网盘"), ("quark.cn", "夸克网盘"),
+    nonisolated static let panHosts: [(String, String)] = [("baidupcs.com", "百度网盘"), ("baidu.com", "百度网盘"), ("quark.cn", "夸克网盘"),
         ("aliyundrive", "阿里云盘"), ("alipan", "阿里云盘"), ("123pan", "123 云盘"), ("123684", "123 云盘"), ("189.cn", "天翼云盘"),
         ("ctyunxs", "天翼云盘"), ("139.com", "移动云盘"), ("uc.cn", "UC 网盘"), ("xunlei.com", "迅雷云盘")]
 
     init() {
         loadVideos()
         Task { await boot() }
+        watcher = ClipboardWatcher(store: self)
+        gateway = Gateway(store: self); gateway?.start()
         Task.detached { await YtDlp.ensureFresh() }
         NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.checkClipboard() }
@@ -90,6 +106,11 @@ final class DownloadStore: ObservableObject {
         }
     }
 
+    var engineToken: String { host.stored.token }
+    func forwardToEngine(method: String, path: String, body: Data?) async -> (Int, Data) {
+        await host.client.forward(method: method, path: path, body: body)
+    }
+
     func shutdown() {
         videoRunner.cancelAll()
         host.stop()
@@ -97,6 +118,7 @@ final class DownloadStore: ObservableObject {
 
     private func startEngine() async {
         engineState = .starting
+        await LocalProxy.check()
         switch await host.start() {
         case .running:
             engineState = .running
@@ -169,7 +191,10 @@ final class DownloadStore: ObservableObject {
         section = .active
     }
 
-    func add(link: String) {
+    func add(link: String) { add(link: link, headers: [:], name: nil) }
+
+    /// headers/name 来自浏览器（Gopeed 扩展、LinkSwift 经网关传来），网盘直链靠它们鉴权
+    func add(link: String, headers: [String: String], name: String?) {
         guard let kind = LinkKind.of(link) else { return }
         seenClipboard.insert(link)
         let key = Self.linkKey(link)
@@ -185,7 +210,7 @@ final class DownloadStore: ObservableObject {
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
 
         if kind == .videoSite {
-            let job = VideoJob(url: link, title: link, site: VideoSiteRunner.siteName(link))
+            let job = VideoJob(url: link, title: link, site: VideoSiteRunner.siteName(link), options: VideoOptions.current)
             videoJobs.append(job); saveVideos(); rebuild()
             videoRunner.start(job, into: Folders.videos) { [weak self] updated in
                 Task { @MainActor in self?.updateVideo(updated) }
@@ -193,7 +218,8 @@ final class DownloadStore: ObservableObject {
             return
         }
 
-        let url = kind == .torrentFile ? Self.torrentDataURL(link) ?? link : link
+        let localTorrent = kind == .torrentFile && !link.lowercased().hasPrefix("http")
+        let url = localTorrent ? Self.torrentDataURL(link) ?? link : link
         if kind == .magnet || kind == .torrentFile {
             // 先解析文件列表，只勾主视频和字幕；磁力要先从网络拿到种子信息
             let placeholder = Item(id: "pending-" + UUID().uuidString, source: .pending, title: PrettyTitle.clean(Self.displayName(link)), rawTitle: Self.displayName(link),
@@ -201,6 +227,15 @@ final class DownloadStore: ObservableObject {
                                    downloaded: 0, total: 0, speed: 0, file: nil, createdAt: Date(), thumbRemote: nil, linkKey: key)
             pending.append(placeholder); rebuild()
             Task {
+                // 网页上的种子链接：内核会把它当普通文件下载，先取回种子再按本地种子交给内核
+                var url = url
+                if kind == .torrentFile, !localTorrent {
+                    guard let data = await Self.fetchTorrent(link) else {
+                        notice = "无法获取种子文件"
+                        pending.removeAll { $0.id == placeholder.id }; rebuild(); return
+                    }
+                    url = "data:application/x-bittorrent;base64," + data.base64EncodedString()
+                }
                 let resolved = try? await host.client.resolve(url: url)
                 let select = resolved.flatMap { FileSelection.pick($0.files) }
                 guard pending.contains(where: { $0.id == placeholder.id }) else { return }  // 解析期间被移除了
@@ -211,7 +246,7 @@ final class DownloadStore: ObservableObject {
             }
         } else {
             Task {
-                do { try await host.client.create(url: url, directory: dir.path) }
+                do { try await host.client.create(url: url, directory: dir.path, headers: headers, name: name) }
                 catch { notice = "添加失败：\(error.localizedDescription)" }
                 await poll()
             }
@@ -279,16 +314,33 @@ final class DownloadStore: ObservableObject {
     // MARK: 剪贴板
 
     func checkClipboard() {
-        guard let s = NSPasteboard.general.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines),
-              s.count < 4000, let link = LinkKind.extract(from: s).first ?? (LinkKind.of(s) != nil ? s : nil),
-              !seenClipboard.contains(link), !items.contains(where: { $0.linkKey == Self.linkKey(link) }) else { return }
-        seenClipboard.insert(link)
-        clipboardLink = link
+        guard let s = NSPasteboard.general.string(forType: .string) else { return }
+        let links = newClipboardLinks(in: s)
+        guard !links.isEmpty else { return }
+        markSeen(links)
+        clipboardLinks = links
+    }
+
+    /// 一段文字里还没提示过、也不在列表中的链接
+    func newClipboardLinks(in text: String) -> [String] {
+        let s = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard s.count < 20000 else { return [] }
+        let found = LinkKind.of(s) != nil ? [s] : LinkKind.extract(from: s)
+        return found.filter { l in !seenClipboard.contains(l) && !items.contains { $0.linkKey == Self.linkKey(l) } }
+    }
+
+    func markSeen(_ links: [String]) { links.forEach { seenClipboard.insert($0) } }
+
+    /// 剪贴板浮窗点「下载」
+    func addFromPopup(_ links: [String]) {
+        links.forEach(add(link:))
+        section = .active
     }
 
     func acceptClipboard() {
-        if let l = clipboardLink { add(link: l) }
-        clipboardLink = nil
+        clipboardLinks?.forEach(add(link:))
+        clipboardLinks = nil
+        section = .active
     }
 
     // MARK: 完成通知
@@ -407,6 +459,17 @@ final class DownloadStore: ObservableObject {
         if let comps = URLComponents(string: link), let dn = comps.queryItems?.first(where: { $0.name == "dn" })?.value, !dn.isEmpty { return dn }
         if link.lowercased().hasSuffix(".torrent") { return (link as NSString).lastPathComponent.replacingOccurrences(of: ".torrent", with: "") }
         return URL(string: link)?.lastPathComponent.removingPercentEncoding ?? link
+    }
+
+    /// 走本机代理取回网页上的种子文件（海外站点常被墙）
+    static func fetchTorrent(_ link: String) async -> Data? {
+        guard let u = URL(string: link) else { return nil }
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.connectionProxyDictionary = LocalProxy.sessionDictionary
+        cfg.timeoutIntervalForRequest = 30
+        guard let (data, resp) = try? await URLSession(configuration: cfg).data(from: u),
+              (resp as? HTTPURLResponse)?.statusCode == 200, data.first == UInt8(ascii: "d") else { return nil }  // 种子是 bencode 字典，以 d 开头
+        return data
     }
 
     static func torrentDataURL(_ path: String) -> String? {

@@ -26,6 +26,7 @@ struct ShandianApp: App {
                 }
                 .keyboardShortcut("v", modifiers: [.command, .shift])
             }
+            CommandGroup(after: .appSettings) { ClipboardToggle() }
         }
 
         Window("关于闪电下载", id: "about") {
@@ -42,9 +43,18 @@ struct ShandianApp: App {
     }
 }
 
+/// 「监听剪贴板」开关（菜单栏「闪电下载」和状态栏菜单里都有）
+struct ClipboardToggle: View {
+    @AppStorage(ClipboardWatcher.enabledKey) private var on = true
+    var body: some View { Toggle("复制链接后弹出下载提示", isOn: $on) }
+}
+
 private struct AboutMenuButton: View {
     @Environment(\.openWindow) private var openWindow
-    var body: some View { Button("关于闪电下载") { openWindow(id: "about") } }
+    var body: some View {
+        Button("关于闪电下载") { AppInfo.showAbout(.intro, openWindow) }
+        Button("更新记录") { AppInfo.showAbout(.changelog, openWindow) }
+    }
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -71,23 +81,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         MainActor.assumeIsolated { store?.shutdown() }
     }
 
-    /// 磁力链接、.torrent 文件用本 App 打开时走这里
+    /// 磁力链接、.torrent 文件用本 App 打开时走这里；
+    /// 另有 shandian://add?url=<链接>（可多个 url），给脚本、skill、书签用：`open -g "shandian://add?url=…"` 不抢焦点
     func application(_ application: NSApplication, open urls: [URL]) {
         MainActor.assumeIsolated {
-            for u in urls { store?.add(link: u.isFileURL ? u.path : u.absoluteString) }
+            for u in urls {
+                if u.scheme == "shandian" {
+                    let links = URLComponents(url: u, resolvingAgainstBaseURL: false)?.queryItems?.filter { $0.name == "url" }.compactMap(\.value) ?? []
+                    links.forEach { store?.add(link: $0) }
+                } else {
+                    store?.add(link: u.isFileURL ? u.path : u.absoluteString)
+                    NSApp.activate(ignoringOtherApps: true)
+                }
+            }
         }
-        NSApp.activate(ignoringOtherApps: true)
     }
 }
 
 struct MenuBarLabel: View {
     @ObservedObject var store: DownloadStore
     var body: some View {
+        // 图标常在；有速度时跟在图标右边
         let speed = store.totalSpeed
-        if speed > 0 {
-            Text("↓ " + speed.speedText).monospacedDigit()
-        } else {
-            Image(systemName: "bolt.fill")
+        HStack(spacing: 4) {
+            Image(nsImage: BrandGlyph.image(height: 15))
+            if speed > 0 { Text(speed.speedText).monospacedDigit() }
         }
     }
 }
@@ -104,6 +122,8 @@ struct MenuBarContent: View {
         Divider()
         Button("打开闪电下载") { openWindow(id: "main"); NSApp.activate(ignoringOtherApps: true) }
         Button(store.allPaused ? "全部继续" : "全部暂停") { store.toggleAll() }.disabled(active.isEmpty)
+        Divider()
+        ClipboardToggle()
         Divider()
         Button("退出") { NSApp.terminate(nil) }.keyboardShortcut("q")
     }

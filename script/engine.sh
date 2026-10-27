@@ -39,6 +39,7 @@ d["downloadDir"]=__import__("os").path.expanduser("~/Downloads")
 d["maxRunning"]=5
 d["proxy"]={"enable":True,"system":False,"scheme":"http","host":"127.0.0.1:7897","usr":"","pwd":""}
 d["protocolConfig"].setdefault("http",{})["connections"]=8
+d["protocolConfig"]["http"]["userAgent"]="ShandianDownload (Macintosh)"  # 不冒充浏览器：Go 握手 + Chrome UA 会被部分镜像当伪装爬虫 403
 d["protocolConfig"].setdefault("bt",{})["listenPort"]=6881
 print(json.dumps(d))')
     api -X PUT "$API/config" -H 'Content-Type: application/json' -d "$cfg"; echo ;;

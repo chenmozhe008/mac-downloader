@@ -108,10 +108,23 @@ final class EngineClient: @unchecked Sendable {
 
     /// 新建任务。注意参数名是 opts（写成 opt 不报错但设置不生效）
     @discardableResult
-    func create(url: String, directory: String, selectFiles: [Int]? = nil) async throws -> String {
+    func create(url: String, directory: String, selectFiles: [Int]? = nil, headers: [String: String] = [:], name: String? = nil) async throws -> String {
         var opts: [String: Any] = ["path": directory]
         if let selectFiles { opts["selectFiles"] = selectFiles }
-        return try await call("POST", "tasks", body: ["req": ["url": url], "opts": opts]) ?? ""
+        if let name, !name.isEmpty { opts["name"] = name }
+        var req: [String: Any] = ["url": url]
+        if !headers.isEmpty { req["extra"] = ["header": headers] }  // 网盘直链要带浏览器的 Cookie、UA、Referer
+        return try await call("POST", "tasks", body: ["req": req, "opts": opts]) ?? ""
+    }
+
+    /// 原样转发给内核（网关代理 Gopeed 浏览器扩展的其它请求用）
+    func forward(method: String, path: String, body: Data?) async -> (Int, Data) {
+        var req = URLRequest(url: URL(string: path, relativeTo: base)!)  // path 以 / 开头，按主机根路径解析
+        req.httpMethod = method
+        req.setValue(token, forHTTPHeaderField: "X-Api-Token")
+        if let body, !body.isEmpty { req.httpBody = body; req.setValue("application/json", forHTTPHeaderField: "Content-Type") }
+        guard let (data, resp) = try? await session.data(for: req) else { return (502, Data()) }
+        return ((resp as? HTTPURLResponse)?.statusCode ?? 502, data)
     }
 
     func pause(_ id: String) async throws { let _: String? = try await call("PUT", "tasks/\(id)/pause") }
@@ -169,19 +182,21 @@ extension EngineClient {
         return obj?["data"] as? [String: Any] ?? [:]
     }
 
-    /// 代理 7897、HTTP 8 连接（国内镜像 16 线程会被封）、BT 固定端口 6881、tracker 为空时补上
+    /// 代理 7897（Clash 没开时关掉）、HTTP 8 连接（国内镜像 16 线程会被封）、BT 固定端口 6881、每次启动更新 tracker（拉取失败保留旧列表）
     func applySettings(defaultDir: String) async {
         guard var cfg = try? await rawConfig() else { return }
         cfg["downloadDir"] = defaultDir
         cfg["maxRunning"] = 5
-        cfg["proxy"] = ["enable": true, "system": false, "scheme": "http", "host": "127.0.0.1:7897", "usr": "", "pwd": ""]
+        cfg["proxy"] = ["enable": LocalProxy.isUp, "system": false, "scheme": "http", "host": "\(LocalProxy.host):\(LocalProxy.port)", "usr": "", "pwd": ""]
         var proto = cfg["protocolConfig"] as? [String: Any] ?? [:]
-        var http = proto["http"] as? [String: Any] ?? [:]; http["connections"] = 8; proto["http"] = http
+        var http = proto["http"] as? [String: Any] ?? [:]; http["connections"] = 8
+        // 不冒充浏览器：Go 的 TLS 握手配 Chrome UA 会被识别为伪装爬虫 403（10-27 中科大实测，内核默认 Chrome 116 / 改 141 都 403，
+        // 如实写下载工具名则 200）。需要浏览器身份的下载（网盘、登录站）由浏览器插件/LinkSwift 带上真实 UA 和 Cookie
+        http["userAgent"] = Self.userAgent
+        proto["http"] = http
         var bt = proto["bt"] as? [String: Any] ?? [:]; bt["listenPort"] = 6881
-        if (bt["trackers"] as? [String] ?? []).isEmpty {
-            let trackers = await Self.fetchTrackers()
-            if !trackers.isEmpty { bt["trackers"] = trackers }
-        }
+        let trackers = await Self.fetchTrackers()
+        if !trackers.isEmpty { bt["trackers"] = trackers }
         proto["bt"] = bt; cfg["protocolConfig"] = proto
         var req = URLRequest(url: URL(string: "config", relativeTo: base)!)
         req.httpMethod = "PUT"
@@ -191,12 +206,18 @@ extension EngineClient {
         _ = try? await session.data(for: req)
     }
 
+    static let userAgent = "ShandianDownload/\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0") (Macintosh)"
+
     static func fetchTrackers() async -> [String] {
         let sources = ["https://cf.trackerslist.com/best.txt",
                        "https://cdn.jsdelivr.net/gh/ngosang/trackerslist@master/trackers_best.txt"]
         var out: [String] = []
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.connectionProxyDictionary = LocalProxy.sessionDictionary  // jsDelivr 在国内时好时坏，有代理就走代理
+        cfg.timeoutIntervalForRequest = 15
+        let session = URLSession(configuration: cfg)
         for s in sources {
-            guard let (data, _) = try? await URLSession.shared.data(from: URL(string: s)!),
+            guard let (data, _) = try? await session.data(from: URL(string: s)!),
                   let text = String(data: data, encoding: .utf8) else { continue }
             for line in text.split(whereSeparator: \.isNewline) {
                 let t = line.trimmingCharacters(in: .whitespaces)

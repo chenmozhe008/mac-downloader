@@ -23,10 +23,12 @@ final class Thumbnails: ObservableObject {
     /// 从本地视频文件截帧。progress 太低时文件头可能还没下到，跳过；失败最多重试 6 次、间隔 30 秒
     func requestFrame(id: String, video: URL, progress: Double) {
         guard images[id] == nil, image(for: id) == nil, !inFlight.contains(id), progress > 0.08 || progress >= 1 else { return }
-        if let a = attempts[id], a.count >= 6 || Date().timeIntervalSince(a.last) < 30 { return }
+        // BT 乱序下载，没下完的文件常截不出画面；下载中最多试 6 次，下完后另外再给 2 次
+        let key = progress >= 1 ? id + "#done" : id
+        if let a = attempts[key], a.count >= (progress >= 1 ? 2 : 6) || Date().timeIntervalSince(a.last) < 30 { return }
         guard let ffmpeg = Self.ffmpeg, FileManager.default.fileExists(atPath: video.path) else { return }
         inFlight.insert(id)
-        attempts[id] = ((attempts[id]?.count ?? 0) + 1, Date())
+        attempts[key] = ((attempts[key]?.count ?? 0) + 1, Date())
         let out = dir.appendingPathComponent("\(id).jpg")
         Task.detached {
             // 片头常是黑场或片商标，取第 3 分钟左右；短片取第 10 秒

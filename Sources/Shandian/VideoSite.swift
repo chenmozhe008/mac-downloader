@@ -1,5 +1,27 @@
 import Foundation
 
+/// 视频网站下载选项（参考 Downie：默认直接下最高画质，选项记住后 ⌘V 也按它来）
+struct VideoOptions: Codable, Equatable {
+    var maxHeight = 0          // 0 = 最高；否则不超过这个分辨率
+    var subtitles = false      // 下载字幕并嵌入视频
+    var audioOnly = false      // 只下音频（m4a）
+
+    private static let key = "videoOptions"
+    static var current: VideoOptions {
+        get { (UserDefaults.standard.data(forKey: key)).flatMap { try? JSONDecoder().decode(VideoOptions.self, from: $0) } ?? VideoOptions() }
+        set { UserDefaults.standard.set(try? JSONEncoder().encode(newValue), forKey: key) }
+    }
+
+    /// 对应的 yt-dlp 参数
+    var arguments: [String] {
+        if audioOnly { return ["-f", "ba/b", "-x", "--audio-format", "m4a"] }
+        // 先比分辨率，同分辨率优先 H.264/AAC：默认会挑体积最小的 AV1，剪映、老 Mac 兼容差
+        var a = ["-f", "bv*+ba/b", "-S", (maxHeight > 0 ? "res:\(maxHeight)" : "res") + ",vcodec:h264,acodec:aac", "--merge-output-format", "mp4"]
+        if subtitles { a += ["--write-subs", "--sub-langs", "zh.*,en.*,ai-zh", "--embed-subs"] }
+        return a
+    }
+}
+
 /// 视频网站的一条下载（yt-dlp 进程）。完成的记录存到 videos.json，重开 App 还在。
 struct VideoJob: Codable, Identifiable {
     var id = UUID()
@@ -14,6 +36,7 @@ struct VideoJob: Codable, Identifiable {
     var state: State = .running
     var error: String?
     var createdAt = Date()
+    var options: VideoOptions?     // 旧记录没有这一项，按默认处理
 
     enum State: String, Codable { case running, done, failed }
 }
@@ -34,8 +57,7 @@ enum YtDlp {
         let fm = FileManager.default
         if !fm.isExecutableFile(atPath: bundled.path) {
             let cfg = URLSessionConfiguration.ephemeral
-            cfg.connectionProxyDictionary = ["HTTPEnable": 1, "HTTPProxy": "127.0.0.1", "HTTPPort": 7897,
-                                             "HTTPSEnable": 1, "HTTPSProxy": "127.0.0.1", "HTTPSPort": 7897]
+            cfg.connectionProxyDictionary = LocalProxy.sessionDictionary
             guard let (tmp, resp) = try? await URLSession(configuration: cfg).download(from: downloadURL),
                   (resp as? HTTPURLResponse)?.statusCode == 200 else { return }
             try? fm.createDirectory(at: bundled.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -48,7 +70,7 @@ enum YtDlp {
         guard Date().timeIntervalSince(modified) > 7 * 86400 else { return }
         let p = Process()
         p.executableURL = bundled
-        p.arguments = ["-U", "--proxy", "http://127.0.0.1:7897"]
+        p.arguments = ["-U"] + LocalProxy.ytdlpArguments
         p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
         try? p.run(); p.waitUntilExit()
         try? fm.setAttributes([.modificationDate: Date()], ofItemAtPath: bundled.path)  // 已是最新时 -U 不改文件，手动记一下检查时间
@@ -76,10 +98,8 @@ final class VideoSiteRunner: @unchecked Sendable {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: bin)
         p.arguments = [
-            "--proxy", "http://127.0.0.1:7897",
             "-P", dir.path, "-o", "%(title).80s [%(id)s].%(ext)s",
-            // 先比分辨率，同分辨率优先 H.264/AAC：默认会挑体积最小的 AV1，剪映、老 Mac 兼容差
-            "-f", "bv*+ba/b", "-S", "res,vcodec:h264,acodec:aac", "--merge-output-format", "mp4", "--no-playlist",
+            "--no-playlist",
             "--newline", "--no-colors",
             "--print", "before_dl:SDTITLE %(title)s",
             "--print", "before_dl:SDTHUMB %(thumbnail)s",
@@ -87,6 +107,11 @@ final class VideoSiteRunner: @unchecked Sendable {
             "--progress-template", "download:SDPROG %(progress.downloaded_bytes)s %(progress.total_bytes)s %(progress.total_bytes_estimate)s %(progress.speed)s %(progress.status)s",
             job.url,
         ]
+        p.arguments?.insert(contentsOf: (job.options ?? VideoOptions()).arguments + LocalProxy.ytdlpArguments, at: 0)
+        // YouTube 需要 JS 运行环境解签名，没有时部分格式缺失（10-27 实测 44 → 52 个格式）；本机有 Node 就接上
+        if let node = ["/opt/homebrew/bin/node", "/usr/local/bin/node"].first(where: { FileManager.default.isExecutableFile(atPath: $0) }) {
+            p.arguments?.insert(contentsOf: ["--js-runtimes", "node:" + node], at: 0)
+        }
         var env = ProcessInfo.processInfo.environment
         env["PATH"] = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"  // 合并音视频要找到 ffmpeg
         p.environment = env

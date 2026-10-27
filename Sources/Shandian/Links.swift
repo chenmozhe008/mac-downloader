@@ -16,7 +16,31 @@ enum LinkKind: Equatable {
         guard let url = URL(string: s), let scheme = url.scheme?.lowercased(), ["http", "https", "ftp"].contains(scheme),
               let host = url.host?.lowercased() else { return nil }
         if videoHosts.contains(where: { host == $0 || host.hasSuffix("." + $0) }) { return .videoSite }
+        if url.path.lowercased().hasSuffix(".torrent") { return .torrentFile }  // 网页上的种子链接，按种子处理（存影片目录、只选正片）
         return .http
+    }
+
+    var label: String {
+        switch self {
+        case .magnet: "磁力"
+        case .torrentFile: "种子文件"
+        case .ed2k: "ed2k"
+        case .videoSite: "视频网站"
+        case .http: "直链"
+        }
+    }
+
+    static let fileExtensions: Set<String> = ["zip", "rar", "7z", "gz", "tgz", "bz2", "xz", "dmg", "pkg", "exe", "msi", "iso", "img", "apk", "ipa",
+                                               "mp4", "mkv", "avi", "mov", "m4v", "ts", "flv", "wmv", "rmvb", "webm", "mp3", "flac", "wav", "m4a", "aac"]
+
+    /// 复制后值得弹浮窗的链接：磁力、ed2k、种子、视频网站、网盘直链，以及以常见文件扩展名结尾的直链。普通网页地址不弹
+    static func worthPopup(_ link: String) -> Bool {
+        guard let kind = of(link) else { return false }
+        if kind != .http { return true }
+        guard let url = URL(string: link) else { return false }
+        let host = url.host?.lowercased() ?? ""
+        if DownloadStore.panHosts.contains(where: { host.contains($0.0) }) { return true }
+        return fileExtensions.contains(url.pathExtension.lowercased())
     }
 
     /// 从一段文字里找出所有能下的链接（粘贴一整段时用）
@@ -57,6 +81,13 @@ enum Folders {
     }
     static var diskMounted: Bool { FileManager.default.fileExists(atPath: movies.path) }
 
+    /// 界面上说的位置名：移动硬盘 › movies、下载、下载 › 视频
+    static func displayName(_ d: URL) -> String {
+        if d == movies { return "移动硬盘 › movies" }
+        if d == downloads { return "下载" }
+        return "下载 › " + d.lastPathComponent
+    }
+
     static func directory(for kind: LinkKind) -> URL {
         switch kind {
         case .magnet, .torrentFile, .ed2k: movieDir
@@ -76,10 +107,30 @@ enum FileSelection {
         let ext = files.map { ($0.name as NSString).pathExtension.lowercased() }
         let videos = files.indices.filter { videoExt.contains(ext[$0]) && !isSample(files[$0].name) }
         guard let biggest = videos.map({ files[$0].size }).max(), biggest > 0 else { return nil }
-        let keepVideos = videos.filter { Double(files[$0].size) >= Double(biggest) * 0.4 }
+        let big = videos.filter { Double(files[$0].size) >= Double(biggest) * 0.4 }
+        // 同一部片的多个格式/码率（Jungle_Book.avi / .mp4 / _512kb.mp4）只留一个；剧集文件名各不相同，照样全留
+        let keepVideos = Dictionary(grouping: big) { stem(files[$0].name) }.values.compactMap { group in
+            group.max { (rank(ext[$0]), files[$0].size) < (rank(ext[$1]), files[$1].size) }
+        }
         let subs = files.indices.filter { subtitleExt.contains(ext[$0]) }
         let picked = (keepVideos + subs).sorted()
         return picked.count == files.count ? nil : picked
+    }
+
+    /// 去掉扩展名和码率/画质后缀，用来判断是不是同一部片的不同版本
+    private static func stem(_ name: String) -> String {
+        var n = ((name as NSString).lastPathComponent as NSString).deletingPathExtension.lowercased()
+        n = n.replacingOccurrences(of: #"[._\- ]?(512kb|256kb|1024kb|hq|lq|ia|low|high)$"#, with: "", options: .regularExpression)
+        return n
+    }
+
+    /// 格式偏好：mp4/mkv 兼容最好，其次 avi/mov 等，ogv/webm/flv 最后
+    private static func rank(_ ext: String) -> Int {
+        switch ext {
+        case "mp4", "mkv", "m4v": 3
+        case "mov", "avi", "ts", "m2ts", "mpg", "mpeg", "wmv", "rmvb": 2
+        default: 1
+        }
     }
 
     private static func isSample(_ name: String) -> Bool {
@@ -103,9 +154,9 @@ extension Int64 {
 func remainingText(_ seconds: Double) -> String {
     guard seconds.isFinite, seconds > 0 else { return "" }
     let s = Int(seconds)
-    if s < 60 { return "剩 \(s) 秒" }
-    if s < 3600 { return "剩 \(s / 60) 分钟" }
-    return "剩 \(s / 3600) 小时 \(s % 3600 / 60) 分"
+    if s < 60 { return "剩余 \(s) 秒" }
+    if s < 3600 { return "剩余 \(s / 60) 分钟" }
+    return "剩余 \(s / 3600) 小时 \(s % 3600 / 60) 分"
 }
 
 /// 把发布名整理成人能读的片名：Conclave.2024.1080p.AMZN.WEBRip-GalaxyRG → Conclave 2024
@@ -134,6 +185,8 @@ enum PrettyTitle {
         s = s.replacingOccurrences(of: #"[\s\-\.]+"#, with: " ", options: .regularExpression)
             .replacingOccurrences(of: #"\(\s*\)"#, with: "", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: "-·.")))
+        if !s.contains(" ") { s = s.replacingOccurrences(of: #"([a-z])([A-Z])"#, with: "$1 $2", options: .regularExpression) }  // JungleBook → Jungle Book
+        if s == s.lowercased(), s.range(of: #"[a-z]"#, options: .regularExpression) != nil { s = s.capitalized }       // his girl friday → His Girl Friday
         return s.isEmpty ? raw : s
     }
 }

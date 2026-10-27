@@ -9,10 +9,17 @@ struct MainView: View {
         // 系统原生分栏：侧栏玻璃、红绿灯位置、工具栏都由系统排，和访达一致
         NavigationSplitView {
             Sidebar(store: store)
-                .navigationSplitViewColumnWidth(min: 180, ideal: 200, max: 240)
+                .navigationSplitViewColumnWidth(min: 200, ideal: 224, max: 260)
         } detail: {
             Content(store: store)
-                .background(Theme.window)
+                .background {
+                    // 左上角一点琥珀暖光（v3 定稿的辨识点，换成原生分栏后补回）
+                    ZStack {
+                        Theme.window
+                        RadialGradient(colors: [Theme.glow, .clear], center: .topLeading, startRadius: 0, endRadius: 620)
+                    }
+                    .ignoresSafeArea()
+                }
                 .navigationTitle(store.section.title)
                 .toolbar { ToolbarItems(store: store) }
                 .searchable(text: $store.search, placement: .toolbar, prompt: "搜索")
@@ -36,6 +43,16 @@ struct MainView: View {
             return true
         }
         .sheet(isPresented: $store.showNewSheet) { NewDownloadSheet(store: store) }
+        // 移除一律先确认，默认只移除任务、文件保留
+        .alert(store.removalTarget.map { "移除「\($0.title)」？" } ?? "",
+               isPresented: Binding(get: { store.removalTarget != nil }, set: { if !$0 { store.removalTarget = nil } }),
+               presenting: store.removalTarget) { item in
+            Button("移除任务") { store.remove(item, moveFiles: false) }
+            Button("移除并将文件移到废纸篓", role: .destructive) { store.remove(item, moveFiles: true) }
+            Button("取消", role: .cancel) {}
+        } message: { item in
+            Text(item.isActive ? "下载将停止。选择「移除任务」时，已下载的部分保留在原位置。" : "选择「移除任务」时，文件保留在原位置。")
+        }
     }
 }
 
@@ -47,35 +64,55 @@ private struct Sidebar: View {
 
     var body: some View {
         List(selection: $store.section) {
-            row(.active, "bolt")
-            row(.done, "checkmark.circle")
+            row(.active, Image(systemName: "arrow.down.circle"))  // 闪电箭头只用在品牌位（App 图标、侧栏顶部、菜单栏），这里和其它行一样用线条图标
+            row(.done, Image(systemName: "checkmark.circle"))
             Section("资料库") {
-                ForEach(Category.allCases) { c in row(.category(c), c.symbol) }
+                ForEach(Category.allCases) { c in row(.category(c), Image(systemName: c.symbol)) }
             }
         }
         .listStyle(.sidebar)
+        .environment(\.sidebarRowSize, .large)
         .safeAreaInset(edge: .top, spacing: 0) { brand }
-        .safeAreaInset(edge: .bottom) { diskStatus }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            VStack(alignment: .leading, spacing: 8) {
+                diskStatus
+                versionRow
+            }
+            .padding(.bottom, 12)
+        }
+
     }
 
-    /// 侧栏顶部：App 图标 + 名字，点击打开「关于」
+    /// 侧栏顶部：App 图标 + 名字，只做标识（「关于」入口在底部，不重复）
     private var brand: some View {
-        Button { openWindow(id: "about") } label: {
-            HStack(spacing: 8) {
-                Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 24, height: 24)
-                Text("闪电下载").font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.text)
-                Spacer()
-            }
-            .contentShape(Rectangle())
+        HStack(spacing: 9) {
+            Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 28, height: 28)
+            Text("闪电下载").font(.system(size: 17, weight: .semibold)).foregroundStyle(Theme.text)
+            Spacer()
         }
-        .buttonStyle(.plain)
-        .help("关于闪电下载")
         .padding(.horizontal, 18).padding(.top, 4).padding(.bottom, 6)
     }
 
-    private func row(_ p: Pane, _ symbol: String) -> some View {
+    /// 侧栏底部：「关于闪电下载」+ 版本号，一个入口；打开是介绍页，更新记录、反馈在里面切换
+    private var versionRow: some View {
+        Button { AppInfo.showAbout(.intro, openWindow) } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "info.circle")
+                Text("关于闪电下载")
+                Spacer()
+                Text(AppInfo.version).monospacedDigit()
+            }
+            .font(.system(size: 12.5)).foregroundStyle(Theme.sub)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 18)
+    }
+
+    private func row(_ p: Pane, _ icon: Image) -> some View {
         let n = store.count(p)
-        return Label(p.title, systemImage: symbol)
+        // 图标颜色交给系统：未选中用 App 强调色（Assets 里的 AccentColor），选中时变白
+        return Label { Text(p.title) } icon: { icon }
             .badge(n > 0 ? Text("\(n)").monospacedDigit() : nil)
             .tag(p)
     }
@@ -84,12 +121,12 @@ private struct Sidebar: View {
         switch store.engineState {
         case .missingDisk:
             Label("移动硬盘未连接", systemImage: "externaldrive.badge.exclamationmark")
-                .font(.system(size: 12)).foregroundStyle(Theme.sub)
-                .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16).padding(.bottom, 12)
+                .font(.system(size: 12.5)).foregroundStyle(Theme.sub)
+                .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 18)
         case .failed(let m):
             Label("内核未启动：\(m)", systemImage: "exclamationmark.triangle")
-                .font(.system(size: 12)).foregroundStyle(Theme.sub)
-                .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16).padding(.bottom, 12)
+                .font(.system(size: 12.5)).foregroundStyle(Theme.sub)
+                .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 18)
         default:
             EmptyView()
         }
@@ -123,8 +160,12 @@ private struct ToolbarItems: ToolbarContent {
             }
             .help(store.allPaused ? "全部继续" : "全部暂停")
             .disabled(store.items.filter(\.isActive).isEmpty)
-            Button { store.showNewSheet = true } label: { Label("新建下载", systemImage: "plus") }
-                .help("新建下载（⌘N）")
+            Button { store.showNewSheet = true } label: {
+                Label("新建下载", systemImage: "plus").labelStyle(.titleAndIcon).font(.system(size: 13, weight: .semibold))
+                    .padding(.horizontal, 4)
+            }
+            .buttonStyle(.borderedProminent)
+            .help("新建下载（⌘N）")
         }
     }
 }
@@ -134,10 +175,10 @@ private struct Banners: View {
     @ObservedObject var store: DownloadStore
     var body: some View {
         VStack(spacing: 8) {
-            if let link = store.clipboardLink {
-                bar(icon: "doc.on.clipboard", text: "剪贴板中有链接：" + DownloadStore.displayName(link)) {
+            if let links = store.clipboardLinks {
+                bar(icon: "doc.on.clipboard", text: links.count > 1 ? "剪贴板中有 \(links.count) 个链接" : "剪贴板中有链接：" + DownloadStore.displayName(links[0])) {
                     Button("下载") { store.acceptClipboard() }.buttonStyle(.borderedProminent).tint(Theme.tint).controlSize(.small)
-                    Button("忽略") { store.clipboardLink = nil }.buttonStyle(.plain).foregroundStyle(Theme.sub).font(.system(size: 12))
+                    Button("忽略") { store.clipboardLinks = nil }.buttonStyle(.plain).foregroundStyle(Theme.sub).font(.system(size: 12))
                 }
             }
             if let n = store.notice {
@@ -147,12 +188,12 @@ private struct Banners: View {
                 }
             }
         }
-        .padding(.bottom, store.clipboardLink == nil && store.notice == nil ? 0 : 10)
+        .padding(.bottom, store.clipboardLinks == nil && store.notice == nil ? 0 : 10)
     }
     private func bar<A: View>(icon: String, text: String, @ViewBuilder actions: () -> A) -> some View {
         HStack(spacing: 10) {
             Image(systemName: icon).foregroundStyle(Theme.tint)
-            Text(text).font(.system(size: 12.5)).lineLimit(1).truncationMode(.middle)
+            Text(text).font(.system(size: 13)).lineLimit(1).truncationMode(.middle)
             Spacer()
             actions()
         }
@@ -168,11 +209,12 @@ private struct ActivePage: View {
     var body: some View {
         let items = store.activeItems
         VStack(alignment: .leading, spacing: 0) {
-            SpeedHero(store: store).frame(height: 118).padding(.bottom, 12)
+            // 没有任务时不显示速度区，只留空状态
             if items.isEmpty {
                 EmptyState(store: store)
             } else {
-                Text(items.allSatisfy(\.isFailed) ? "未完成" : "进行中").font(.system(size: 13, weight: .semibold)).padding(.bottom, 6)
+                SpeedHero(store: store).frame(height: 156).padding(.top, 8).padding(.bottom, 20)
+                Text(items.allSatisfy(\.isFailed) ? "未完成" : "进行中").font(.system(size: 15, weight: .semibold)).padding(.bottom, 6)
                 ScrollView {
                     LazyVStack(spacing: 0) {
                         ForEach(items) { TaskRow(store: store, item: $0) }
@@ -184,35 +226,40 @@ private struct ActivePage: View {
     }
 }
 
+/// 速度横幅：速度曲线铺满整幅当背景，大号速度压在上面
 private struct SpeedHero: View {
     @ObservedObject var store: DownloadStore
     var body: some View {
         let speed = store.totalSpeed
-        let parts = speed.speedText.split(separator: " ")
-        HStack(alignment: .bottom, spacing: 24) {
+        let moving = store.activeItems.contains { $0.status == .running || $0.status == .waiting || $0.isResolving }
+        let parts = moving ? speed.speedText.split(separator: " ") : ["已暂停"]
+        let shape = RoundedRectangle(cornerRadius: 18, style: .continuous)
+        ZStack(alignment: .topLeading) {
+            shape.fill(LinearGradient(colors: [Theme.tint.opacity(0.10), Theme.tint.opacity(0.03)], startPoint: .topLeading, endPoint: .bottomTrailing))
+            SpeedChart(values: store.speedHistory)
+                .padding(.top, 34)
+                .opacity(store.speedHistory.contains { $0 > 0 } ? 1 : 0.0)
+                .clipShape(shape)
             VStack(alignment: .leading, spacing: 0) {
-                Text("当前速度").font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.sub)
+                Text("当前速度").font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.sub)
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(parts.first.map(String.init) ?? "0").font(.system(size: 46, weight: .semibold)).monospacedDigit()
+                    Text(parts.first.map(String.init) ?? "0").font(.system(size: 52, weight: .bold, design: .rounded)).monospacedDigit()
                         .contentTransition(.numericText())
-                    Text(parts.dropFirst().joined(separator: " ")).font(.system(size: 17, weight: .medium)).foregroundStyle(Theme.sub)
+                    Text(parts.dropFirst().joined(separator: " ")).font(.system(size: 19, weight: .semibold, design: .rounded)).foregroundStyle(Theme.sub)
                 }
-                .padding(.top, 2)
                 HStack(spacing: 14) {
                     let failed = store.activeItems.filter(\.isFailed).count
                     let n = store.activeItems.count - failed
-                    Text(n == 0 ? "没有进行中的下载" : "\(n) 项进行中")
+                    if n > 0 { Text("\(n) 项进行中") }
                     if failed > 0 { Text("\(failed) 项失败") }
-                    let eta = remainingText(store.etaAll).replacingOccurrences(of: "剩 ", with: "")
-                    if n > 0, !eta.isEmpty { Text("约 \(eta)全部完成") }
+                    let eta = remainingText(store.etaAll).replacingOccurrences(of: "剩余 ", with: "")
+                    if moving, !eta.isEmpty { Text("预计 \(eta)后全部完成") }
                 }
-                .font(.system(size: 12)).foregroundStyle(Theme.sub).padding(.top, 8)
+                .font(.system(size: 13)).foregroundStyle(Theme.sub).padding(.top, 4)
             }
-            .fixedSize()
-            SpeedChart(values: store.speedHistory).frame(maxWidth: 560).padding(.bottom, 6)
-                .opacity(store.speedHistory.contains { $0 > 0 } ? 1 : 0)
+            .padding(.horizontal, 24).padding(.vertical, 18)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .overlay(shape.strokeBorder(Theme.tint.opacity(0.18), lineWidth: 1))
     }
 }
 
@@ -237,31 +284,52 @@ private struct SpeedChart: View {
             ZStack {
                 Path { p in p.addPath(line); p.addLine(to: CGPoint(x: w, y: h)); p.addLine(to: CGPoint(x: 0, y: h)); p.closeSubpath() }
                     .fill(LinearGradient(colors: [Theme.tint.opacity(0.28), Theme.tint.opacity(0)], startPoint: .top, endPoint: .bottom))
-                line.stroke(Theme.tint, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                line.stroke(Theme.tint, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                    .shadow(color: Theme.tint.opacity(0.5), radius: 6)
                 if let last = pts.last { Circle().fill(Theme.tint).frame(width: 8, height: 8).position(x: last.x - 3, y: last.y) }
             }
-            .mask(LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: .black, location: 0.35)], startPoint: .leading, endPoint: .trailing))
+            .mask(LinearGradient(stops: [.init(color: .clear, location: 0.15), .init(color: .black, location: 0.55)], startPoint: .leading, endPoint: .trailing))
             .animation(.easeOut(duration: 0.8), value: values)
         }
     }
 }
 
+/// 空闲页：带暖光的放置区（⌘V 或拖入），下面列支持的来源和累计下载
 private struct EmptyState: View {
     @ObservedObject var store: DownloadStore
+    private let sources = ["磁力", "种子", "ed2k", "直链", "网盘", "B 站", "YouTube", "X", "微博"]
+
     var body: some View {
-        VStack(spacing: 14) {
-            Image(systemName: "bolt.circle").font(.system(size: 44, weight: .thin)).foregroundStyle(Theme.tint)
-            Text("复制链接后按 ⌘V，即可开始下载").font(.system(size: 15, weight: .medium))
-            VStack(spacing: 4) {
-                Text("支持磁力、种子文件、ed2k、网盘直链")
-                Text("以及 B 站、YouTube 等视频网站")
+        let shape = RoundedRectangle(cornerRadius: 22, style: .continuous)
+        VStack(spacing: 18) {
+            VStack(spacing: 14) {
+                Image(nsImage: BrandGlyph.image(height: 60)).foregroundStyle(Theme.tint)
+                    .shadow(color: Theme.tint.opacity(0.45), radius: 14)
+                Text("复制链接后按 ⌘V 开始下载").font(.system(size: 20, weight: .bold))
+                Text("也可以把链接或种子文件拖到这里").font(.system(size: 13.5)).foregroundStyle(Theme.sub)
+                HStack(spacing: 6) {
+                    ForEach(sources, id: \.self) { s in
+                        Text(s).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.text.opacity(0.75))
+                            .padding(.horizontal, 10).frame(height: 24)
+                            .background(Capsule().fill(Theme.faint))
+                    }
+                }
+                .padding(.top, 6)
             }
-            .font(.system(size: 12.5)).foregroundStyle(Theme.sub)
-            Button("新建下载") { store.showNewSheet = true }
-                .buttonStyle(.borderedProminent).tint(Theme.tint).controlSize(.large).padding(.top, 4)
+            .frame(maxWidth: .infinity).padding(.vertical, 48)
+            .background(
+                shape.fill(RadialGradient(colors: [Theme.tint.opacity(0.12), Theme.tint.opacity(0.02)], center: .top, startRadius: 0, endRadius: 420))
+            )
+            .overlay(shape.strokeBorder(Theme.tint.opacity(0.35), style: StrokeStyle(lineWidth: 1.2, dash: [7, 6])))
+            let done = store.items.filter { !$0.isActive }
+            if !done.isEmpty {
+                Text("已完成 \(done.count) 项，共 \(done.reduce(Int64(0)) { $0 + $1.total }.bytesText)")
+                    .font(.system(size: 13)).foregroundStyle(Theme.sub).monospacedDigit()
+            }
         }
+        .frame(maxWidth: 760)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(.bottom, 80)
+        .padding(.bottom, 60)
     }
 }
 
@@ -277,8 +345,8 @@ private struct Thumb: View {
             if let img = thumbs.image(for: item.id) {
                 Image(nsImage: img).resizable().aspectRatio(contentMode: .fill)
             } else {
-                Theme.faint
-                Image(systemName: item.category.symbol).font(.system(size: width / 6, weight: .light)).foregroundStyle(Theme.sub)
+                LinearGradient(colors: [Theme.tint.opacity(0.16), Theme.tint.opacity(0.05)], startPoint: .topLeading, endPoint: .bottomTrailing)
+                Image(systemName: item.category.symbol).font(.system(size: width / 6, weight: .light)).foregroundStyle(Theme.tint.opacity(0.7))
             }
         }
         .frame(width: width, height: h)
@@ -296,31 +364,31 @@ struct TaskRow: View {
         HStack(spacing: 16) {
             Thumb(thumbs: store.thumbs, item: item)
             VStack(alignment: .leading, spacing: 3) {
-                Text(item.title).font(.system(size: 14, weight: .medium)).lineLimit(1).truncationMode(.middle).help(item.rawTitle)
+                Text(item.title).font(.system(size: 15, weight: .medium)).lineLimit(1).truncationMode(.middle).help(item.rawTitle)
                 HStack(spacing: 12) {
                     Text(item.origin)
                     Text(sizeText)
                     if case .failed(let m) = item.status { Text(m).foregroundStyle(Theme.failed) }
                 }
-                .font(.system(size: 12)).foregroundStyle(Theme.sub).lineLimit(1)
+                .font(.system(size: 13)).foregroundStyle(Theme.sub).lineLimit(1)
                 ProgressBar(value: item.progress, dim: item.status == .paused || item.isResolving)
                     .padding(.top, 7)
             }
             VStack(alignment: .trailing, spacing: 3) {
-                Text(primary).font(.system(size: 14, weight: .medium)).monospacedDigit()
-                Text(secondary).font(.system(size: 12)).foregroundStyle(Theme.sub).monospacedDigit()
+                Text(primary).font(.system(size: 15, weight: .medium)).monospacedDigit()
+                Text(secondary).font(.system(size: 13)).foregroundStyle(Theme.sub).monospacedDigit()
             }
-            .frame(width: 120, alignment: .trailing)
-            HStack(spacing: 4) {
+            .frame(width: 140, alignment: .trailing)
+            HStack(spacing: 6) {
                 if case .engine = item.source {
                     CircleIconButton(symbol: item.status == .paused || item.isFailed ? "play.fill" : "pause.fill",
                                      help: item.status == .paused ? "继续" : "暂停") { store.togglePause(item) }
                 } else if item.isFailed {
                     CircleIconButton(symbol: "arrow.clockwise", help: "重试") { store.retry(item) }
                 }
-                CircleIconButton(symbol: "xmark", help: "移除") { store.remove(item, moveFiles: false) }
+                CircleIconButton(symbol: "xmark", help: "移除") { store.removalTarget = item }
             }
-            .frame(width: 64, alignment: .trailing)
+            .frame(width: 80, alignment: .trailing)
             .opacity(hover.on ? 1 : 0)
         }
         .padding(.vertical, 10)
@@ -368,11 +436,14 @@ private struct ProgressBar: View {
         GeometryReader { g in
             ZStack(alignment: .leading) {
                 Capsule().fill(Theme.track)
-                Capsule().fill(dim ? Theme.sub : Theme.tint).frame(width: max(0, g.size.width * value))
+                Capsule()
+                    .fill(dim ? AnyShapeStyle(Theme.sub) : AnyShapeStyle(LinearGradient(colors: [Theme.tint.opacity(0.65), Theme.tint], startPoint: .leading, endPoint: .trailing)))
+                    .frame(width: max(0, g.size.width * value))
+                    .shadow(color: dim ? .clear : Theme.tint.opacity(0.45), radius: 4)
                     .animation(.easeOut(duration: 0.6), value: value)
             }
         }
-        .frame(height: 4)
+        .frame(height: 5)
     }
 }
 
@@ -382,12 +453,13 @@ private struct ItemMenu: View {
     var body: some View {
         if !item.isActive { Button("打开") { store.open(item) } }
         Button("在访达中显示") { store.reveal(item) }
-        if case .engine = item.source, item.isActive {
+        if item.isFailed {
+            Button("重试") { store.retry(item) }
+        } else if case .engine = item.source, item.isActive {
             Button(item.status == .paused ? "继续" : "暂停") { store.togglePause(item) }
         }
         Divider()
-        Button("移除任务") { store.remove(item, moveFiles: false) }
-        Button("移除任务并将文件移到废纸篓") { store.remove(item, moveFiles: true) }
+        Button("移除…") { store.removalTarget = item }
     }
 }
 
@@ -399,9 +471,9 @@ private struct DonePage: View {
     var subtitle: String?       // 分类页里「已完成」小标题；页面标题在窗口工具栏
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if let subtitle { Text(subtitle).font(.system(size: 13, weight: .semibold)).padding(.bottom, 10) }
+            if let subtitle { Text(subtitle).font(.system(size: 15, weight: .semibold)).padding(.bottom, 10) }
             if items.isEmpty {
-                Text("暂无").font(.system(size: 13)).foregroundStyle(Theme.sub)
+                Text("暂无").font(.system(size: 14)).foregroundStyle(Theme.sub)
                     .frame(maxWidth: .infinity, maxHeight: .infinity).padding(.bottom, 80)
             } else {
                 ScrollView {
@@ -422,12 +494,12 @@ private struct DoneCard: View {
         VStack(alignment: .leading, spacing: 0) {
             GeometryReader { g in Thumb(thumbs: store.thumbs, item: item, width: g.size.width) }
                 .aspectRatio(16 / 9, contentMode: .fit)
-            Text(item.title).font(.system(size: 13, weight: .medium)).lineLimit(1).truncationMode(.middle).padding(.top, 8).help(item.rawTitle)
+            Text(item.title).font(.system(size: 14, weight: .medium)).lineLimit(1).truncationMode(.middle).padding(.top, 8).help(item.rawTitle)
             HStack(spacing: 10) {
                 Text(item.total.bytesText)
                 Text(item.origin)
             }
-            .font(.system(size: 12)).foregroundStyle(Theme.sub).padding(.top, 2)
+            .font(.system(size: 12.5)).foregroundStyle(Theme.sub).padding(.top, 2)
         }
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { store.open(item) }
@@ -445,7 +517,7 @@ private struct CategoryPage: View {
         let active = all.filter(\.isActive)
         VStack(alignment: .leading, spacing: 0) {
             if !active.isEmpty {
-                Text("进行中").font(.system(size: 13, weight: .semibold)).padding(.bottom, 6)
+                Text("进行中").font(.system(size: 15, weight: .semibold)).padding(.bottom, 6)
                 ForEach(active) { TaskRow(store: store, item: $0) }
                 Spacer().frame(height: 20)
                 DonePage(store: store, items: all.filter { !$0.isActive }, subtitle: "已完成")
@@ -460,6 +532,7 @@ private struct CategoryPage: View {
 
 private struct NewDownloadSheet: View {
     @ObservedObject var store: DownloadStore
+    @State private var options = VideoOptions.current
     var body: some View {
         let links = LinkKind.extract(from: store.newLinksText)
         VStack(alignment: .leading, spacing: 14) {
@@ -490,10 +563,30 @@ private struct NewDownloadSheet: View {
                     if links.count > 5 { Text("等 \(links.count) 个链接").font(.system(size: 11)).foregroundStyle(Theme.sub) }
                 }
             }
+            // 有视频网站链接时才出现；选项会记住，之后 ⌘V 也按它下载
+            if links.contains(where: { LinkKind.of($0) == .videoSite }) {
+                Divider()
+                HStack(spacing: 18) {
+                    HStack(spacing: 8) {
+                        Text("画质").font(.system(size: 12.5)).foregroundStyle(Theme.sub)
+                        Picker("", selection: $options.maxHeight) {
+                            Text("最高").tag(0)
+                            Text("1080P").tag(1080)
+                            Text("720P").tag(720)
+                        }
+                        .pickerStyle(.segmented).labelsHidden().frame(width: 190)
+                        .disabled(options.audioOnly)
+                    }
+                    Toggle("下载字幕", isOn: $options.subtitles).disabled(options.audioOnly)
+                    Toggle("仅音频", isOn: $options.audioOnly)
+                }
+                .font(.system(size: 12.5))
+                .toggleStyle(.checkbox)
+            }
             HStack {
                 Spacer()
                 Button("取消") { store.showNewSheet = false }.keyboardShortcut(.cancelAction)
-                Button(links.count > 1 ? "下载 \(links.count) 项" : "下载") { store.submitNewSheet() }
+                Button(links.count > 1 ? "下载 \(links.count) 项" : "下载") { VideoOptions.current = options; store.submitNewSheet() }
                     .keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent).tint(Theme.tint)
                     .disabled(links.isEmpty)
             }

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # build_app.sh [run|package] —— 编译、打包成 dist/闪电下载.app（run 时顺便打开）
 set -euo pipefail
-APP_NAME="闪电下载"; EXECUTABLE_NAME="Shandian"; BUNDLE_ID="io.github.chenmozhe008.shandian"; APP_VERSION="0.2.0"
+APP_NAME="闪电下载"; EXECUTABLE_NAME="Shandian"; BUNDLE_ID="io.github.chenmozhe008.shandian"; APP_VERSION="0.3.0"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
 APP="$ROOT/dist/$APP_NAME.app"
 CODESIGN_IDENTITY="${CODESIGN_IDENTITY:-Apple Development}"
@@ -25,6 +25,9 @@ rm -rf "$APP"; mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/$EXECUTABLE_NAME"
 cp "$ICNS" "$APP/Contents/Resources/AppIcon.icns"
 cp "$ROOT/CHANGELOG.md" "$APP/Contents/Resources/CHANGELOG.md"  # 「关于 → 更新记录」直接读它
+# 强调色（琥珀）：侧栏选中行、按钮等系统控件跟随它；SwiftPM 不编译 xcassets，这里用 actool 单独编
+xcrun actool "$ROOT/Resources/Assets.xcassets" --compile "$APP/Contents/Resources" --platform macosx \
+  --minimum-deployment-target 14.0 --accent-color AccentColor --output-partial-info-plist "$ROOT/tmp/assets-info.plist" >/dev/null
 BUILD_NUMBER="$(git rev-list --count HEAD 2>/dev/null || echo 1)"
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -35,6 +38,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleName</key><string>$APP_NAME</string>
   <key>CFBundleDisplayName</key><string>$APP_NAME</string>
   <key>CFBundleIconFile</key><string>AppIcon.icns</string>
+  <key>NSAccentColorName</key><string>AccentColor</string>
   <key>CFBundleShortVersionString</key><string>$APP_VERSION</string>
   <key>CFBundleVersion</key><string>$BUILD_NUMBER</string>
   <key>CFBundlePackageType</key><string>APPL</string>
@@ -43,6 +47,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleURLTypes</key><array>
     <dict><key>CFBundleURLName</key><string>磁力链接</string><key>CFBundleURLSchemes</key><array><string>magnet</string></array></dict>
     <dict><key>CFBundleURLName</key><string>ed2k 链接</string><key>CFBundleURLSchemes</key><array><string>ed2k</string></array></dict>
+    <dict><key>CFBundleURLName</key><string>闪电下载</string><key>CFBundleURLSchemes</key><array><string>shandian</string></array></dict>
   </array>
   <key>CFBundleDocumentTypes</key><array>
     <dict><key>CFBundleTypeName</key><string>BitTorrent 种子</string><key>CFBundleTypeRole</key><string>Viewer</string>
