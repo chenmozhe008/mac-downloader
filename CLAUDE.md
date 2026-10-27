@@ -65,7 +65,7 @@
 - Gopeed API 新建任务参数是 `opts`（不是 `opt`），写错不报错、路径静默失效
 - BT 客户端全内核只建一次（`internal/protocol/bt/fetcher.go initClient`），`cfg.HTTPProxy` 取**第一个** BT 任务的代理设置，之后改全局代理不生效、要重启内核。所以磁力/种子任务绝不能带 `req.proxy`（10-28 读 v1.9.3 源码确认）
 - 上传：内核 `cfg.Seed = true`，上传没被关；《求救信号》上传一直 0 是对方不向我们要数据（迅雷用户为主），同时下的《希望》传了 49 MB。本机路由器 SSDP 发现不到 UPnP 网关（10-28），IPv4 下别人连不进来，要在路由器里开 UPnP；Mac 防火墙已放行 gopeed
-- 重启内核后会把已下部分整个重新校验一遍（读盘约 90 MB/s），App 显示「正在校验」（`checkFloor`）
+- 重启内核后会把已下部分整个重新校验一遍（读盘约 90 MB/s），App 显示「正在校验」（`checkFloor`）。根因：Gopeed 用 .part 文件，anacrolix 此时块完成记录只在内存（NewFileOpts → NewMapPieceCompletion）；内核不重启时暂停/继续不校验。改法见 docs/PLAN.md 第 8 项（待用户定）
 - 内核没有限速配置项（v1.9.3 config 里没有），偏好设置不做限速
 - `download-movie` skill 暂不改（用户 10-27 说：测稳了再改）
 
