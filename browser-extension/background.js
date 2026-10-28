@@ -147,3 +147,35 @@ chrome.runtime.onInstalled.addListener(async () => {
   ping();
 });
 chrome.runtime.onStartup.addListener(() => { refreshBadge(); ping(); });
+
+// 把浏览器里已经登录着的 PikPak 关联到闪电下载（App 用 mypikpak.com/drive/#shandian-link 打开这个页面）。
+// 取走网页存的登录信息后删掉网页那份：同一份登录两边都刷新会互相作废，所以之后网页端会变成未登录
+function grabPikPakSession() {
+  const k = Object.keys(localStorage).find((k) => k.startsWith("credentials_"));
+  if (!k) return null;
+  const c = JSON.parse(localStorage.getItem(k) || "{}");
+  if (!c.access_token || !c.refresh_token) return null;
+  const out = { key: k, c, device: localStorage.getItem("deviceid") || "" };
+  localStorage.removeItem(k);
+  return out;
+}
+
+chrome.tabs.onUpdated.addListener(async (tabId, change, tab) => {
+  if (change.status !== "complete" || !tab.url || !tab.url.startsWith("https://mypikpak.com/") || !tab.url.includes("#shandian-link")) return;
+  for (let i = 0; i < 10; i++) {   // 网页登录信息可能稍后才写好
+    const [res] = await chrome.scripting.executeScript({ target: { tabId }, func: grabPikPakSession }).catch(() => [null]);
+    const s = res?.result;
+    if (s) {
+      const ok = await fetch("http://127.0.0.1:6800/extension/pikpak", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(s),
+      }).then((r) => r.ok).catch(() => false);
+      await chrome.scripting.executeScript({ target: { tabId }, func: (ok) => {
+        document.title = ok ? "已关联到闪电下载" : "关联失败";
+        alert(ok ? "PikPak 已关联到闪电下载，可以关掉这个页面了。" : "没能交给闪电下载，请确认闪电下载已打开。");
+      }, args: [ok] });
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  // 没登录：留在页面上让用户登录，登录后再从闪电下载点一次「从浏览器关联」
+});

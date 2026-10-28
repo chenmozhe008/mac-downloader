@@ -131,6 +131,20 @@ final class Gateway: @unchecked Sendable {
         guard r.headers["origin"] == Self.extensionOrigin else { return (403, json(["ok": false])) }
         let browser = r.headers["user-agent"]?.contains("Edg/") == true ? "Edge" : "Chrome"
         await MainActor.run { BrowserExtension.markConnected(browser) }
+        if r.path.hasPrefix("/extension/pikpak"), r.method == "POST",
+           let o = try? JSONSerialization.jsonObject(with: r.body) as? [String: Any],
+           let key = o["key"] as? String, let c = o["c"] as? [String: Any],
+           let at = c["access_token"] as? String, let rt = c["refresh_token"] as? String {
+            // 浏览器里登录着的 PikPak：键名 credentials_<client_id>[@<sub>]
+            let client = String(key.dropFirst("credentials_".count).split(separator: "@").first ?? "")
+            var device = o["device"] as? String ?? ""
+            device = device.trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+            let name = (c["username"] as? String) ?? (c["email"] as? String) ?? "PikPak 账号"
+            await PikPak.shared.adoptWebSession(clientID: client.isEmpty ? PikPak.web.clientID : client, deviceID: device,
+                                                accessToken: at, refreshToken: rt, userID: c["sub"] as? String ?? "", name: name)
+            await MainActor.run { NotificationCenter.default.post(name: PikPak.loginChanged, object: nil) }
+            return (200, json(["ok": true]))
+        }
         if r.path.hasPrefix("/extension/ping") { return (200, json(["ok": true, "version": BrowserExtension.bundledVersion])) }
         guard r.method == "POST", let obj = try? JSONSerialization.jsonObject(with: r.body) as? [String: Any],
               let url = obj["url"] as? String, LinkKind.of(url) != nil else { return (400, json(["ok": false])) }

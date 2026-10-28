@@ -39,6 +39,11 @@ struct ShandianApp: App {
         }
         .windowResizability(.contentSize)
 
+        Window("登录 PikPak", id: "pikpak-login") {
+            PikPakLoginWindow()
+        }
+        .windowResizability(.contentSize)
+
         Window("关于闪电下载", id: "about") {
             AboutView()
         }

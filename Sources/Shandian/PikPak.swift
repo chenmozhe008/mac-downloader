@@ -7,6 +7,7 @@ import Foundation
 /// 只存登录后的令牌（pikpak.json，600 权限），不存密码。PikPak 在境外，请求走本机代理。
 actor PikPak {
     static let shared = PikPak()
+    nonisolated static let loginChanged = Notification.Name("PikPakLoginChanged")
 
     /// 签发 token 的客户端：安卓（账号密码登录）和网页（在 PikPak 网页里登录后取会话）。token 绑定签发它的客户端，刷新要用同一个。
     /// 网页端常量取自开源项目 peach 的 ADR-0093 与 AList（PikPak 改版网页时盐和固定时间戳可能会换）

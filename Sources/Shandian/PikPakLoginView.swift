@@ -99,3 +99,14 @@ private struct PikPakWebView: NSViewRepresentable {
         }
     }
 }
+
+/// 独立窗口（不用表单弹窗：表单里的网页常常点不动）；登录成功或取消后自己关掉
+struct PikPakLoginWindow: View {
+    @Environment(\.dismissWindow) private var dismissWindow
+    var body: some View {
+        PikPakLoginView { name in
+            if name != nil { NotificationCenter.default.post(name: PikPak.loginChanged, object: nil) }
+            dismissWindow(id: "pikpak-login")
+        }
+    }
+}

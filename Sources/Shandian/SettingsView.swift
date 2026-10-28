@@ -48,7 +48,7 @@ struct SettingsView: View {
     @AppStorage(Prefs.autoThunderKey) private var autoThunder = false
     @AppStorage(Prefs.autoCloudKey) private var autoCloud = true
     @State private var pkState = PikPak.loggedInUser
-    @State private var showPKLogin = false
+    @Environment(\.openWindow) private var openWindow
     @AppStorage(ClipboardWatcher.enabledKey) private var watchClipboard = true
     @AppStorage(NewTaskPanels.askKey) private var confirmNew = true
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
@@ -92,10 +92,15 @@ struct SettingsView: View {
                         .help("BT 网络里几乎没人传的资源，交给 PikPak 服务器下好，再从云盘满速拉回")
                 } else {
                     LabeledContent("PikPak 账号") {
-                        Button("用浏览器登录…") { showPKLogin = true }
+                        HStack {
+                            // 浏览器里登录着 PikPak：扩展把登录交给闪电下载，什么都不用输
+                            Button("从浏览器关联") { NSWorkspace.shared.open(URL(string: "https://mypikpak.com/drive/#shandian-link")!) }
+                                .buttonStyle(.borderedProminent)
+                            Button("在窗口里登录…") { openWindow(id: "pikpak-login"); NSApp.activate(ignoringOtherApps: true) }
+                        }
                     }
-                    Text("在弹出的 PikPak 官方网页里登录，密码不经过闪电下载。没有账号先在网页里免费注册（需开代理）。")
-                        .font(.system(size: 12)).foregroundStyle(Theme.sub)
+                    Text("浏览器里已登录 PikPak 时点「从浏览器关联」即可（需装好闪电下载扩展）；关联后浏览器里的 PikPak 网页会退出登录，因为同一份登录不能两边同时用。")
+                        .font(.system(size: 12)).foregroundStyle(Theme.sub).fixedSize(horizontal: false, vertical: true)
                 }
             }
 
@@ -111,12 +116,7 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .sheet(isPresented: $showPKLogin) {
-            PikPakLoginView { name in
-                showPKLogin = false
-                if name != nil { pkState = PikPak.loggedInUser }
-            }
-        }
+        .onReceive(NotificationCenter.default.publisher(for: PikPak.loginChanged)) { _ in pkState = PikPak.loggedInUser }
         .frame(width: 520)
         .fixedSize(horizontal: false, vertical: true)
         .tint(Theme.tint)
