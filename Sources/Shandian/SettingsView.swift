@@ -94,7 +94,13 @@ struct SettingsView: View {
                     LabeledContent("PikPak 账号") {
                         HStack {
                             // 浏览器里登录着 PikPak：扩展把登录交给闪电下载，什么都不用输
-                            Button("从浏览器关联") { NSWorkspace.shared.open(URL(string: "https://mypikpak.com/drive/#shandian-link")!) }
+                            // Chrome、Edge 都打开：哪个里登录着 PikPak 就从哪个关联（默认浏览器不一定是登录的那个）
+                            Button("从浏览器关联") {
+                                let u = URL(string: "https://mypikpak.com/drive/#shandian-link")!
+                                for app in ["/Applications/Google Chrome.app", "/Applications/Microsoft Edge.app"] where FileManager.default.fileExists(atPath: app) {
+                                    NSWorkspace.shared.open([u], withApplicationAt: URL(fileURLWithPath: app), configuration: NSWorkspace.OpenConfiguration(), completionHandler: nil)
+                                }
+                            }
                                 .buttonStyle(.borderedProminent)
                             Button("在窗口里登录…") { openWindow(id: "pikpak-login"); NSApp.activate(ignoringOtherApps: true) }
                         }
