@@ -131,7 +131,7 @@ final class Gateway: @unchecked Sendable {
         guard r.headers["origin"] == Self.extensionOrigin else { return (403, json(["ok": false])) }
         let browser = r.headers["user-agent"]?.contains("Edg/") == true ? "Edge" : "Chrome"
         await MainActor.run { BrowserExtension.markConnected(browser) }
-        if r.path.hasPrefix("/extension/ping") { return (200, json(["ok": true])) }
+        if r.path.hasPrefix("/extension/ping") { return (200, json(["ok": true, "version": BrowserExtension.bundledVersion])) }
         guard r.method == "POST", let obj = try? JSONSerialization.jsonObject(with: r.body) as? [String: Any],
               let url = obj["url"] as? String, LinkKind.of(url) != nil else { return (400, json(["ok": false])) }
         let headers = obj["headers"] as? [String: String] ?? [:]

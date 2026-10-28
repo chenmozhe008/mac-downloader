@@ -7,6 +7,13 @@ import SwiftUI
 enum BrowserExtension {
     static let folder = EngineConfig.supportDir.appendingPathComponent("BrowserExtension")
 
+    /// App 带的扩展版本（扩展用它判断要不要自己重新加载）
+    static var bundledVersion: String {
+        guard let u = Bundle.main.resourceURL?.appendingPathComponent("BrowserExtension/manifest.json"),
+              let d = try? Data(contentsOf: u), let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { return "" }
+        return o["version"] as? String ?? ""
+    }
+
     static func install() {
         guard let src = Bundle.main.resourceURL?.appendingPathComponent("BrowserExtension") else { return }
         let fm = FileManager.default

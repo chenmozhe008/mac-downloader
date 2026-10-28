@@ -4,8 +4,17 @@
 const APP = "http://127.0.0.1:6800/extension/add";
 const PING = "http://127.0.0.1:6800/extension/ping";
 
-// 告诉 App 扩展已装好（设置页显示「已连接」）
-function ping() { fetch(PING, { method: "POST" }).catch(() => {}); }
+// 告诉 App 扩展已装好（设置页显示「已连接」）；App 带的扩展版本比现在的新就自己重新加载
+// （已解压的扩展浏览器不会自动刷新，App 更新时已把新文件写进扩展文件夹）
+async function ping() {
+  try {
+    const r = await fetch(PING, { method: "POST" });
+    const { version } = await r.json();
+    if (version && version !== chrome.runtime.getManifest().version) chrome.runtime.reload();
+  } catch (_) {}
+}
+chrome.alarms.create("shandian-ping", { periodInMinutes: 10 });
+chrome.alarms.onAlarm.addListener((a) => { if (a.name === "shandian-ping") ping(); });
 
 async function enabled() {
   const { takeover = true } = await chrome.storage.local.get("takeover");
