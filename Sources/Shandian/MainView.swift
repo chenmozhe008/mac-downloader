@@ -93,24 +93,35 @@ private struct Sidebar: View {
         .padding(.horizontal, 18).padding(.top, 4).padding(.bottom, 6)
     }
 
-    /// 侧栏底部：「关于闪电下载」打开介绍，点版本号直接看更新记录
+    /// 侧栏底部两行：设置；关于闪电下载 + 版本号（点版本号直接看更新记录）
     private var versionRow: some View {
-        HStack(spacing: 6) {
-            Button { AppInfo.showAbout(.intro, openWindow) } label: {
+        VStack(alignment: .leading, spacing: 10) {
+            SettingsLink {
                 HStack(spacing: 6) {
-                    Image(systemName: "info.circle")
-                    Text("关于闪电下载").lineLimit(1).fixedSize()
+                    Image(systemName: "gearshape").frame(width: 16)
+                    Text("设置").lineLimit(1).fixedSize()
                     Spacer(minLength: 0)
                 }
                 .contentShape(Rectangle())
             }
-            .help("关于闪电下载")
-            Button { AppInfo.showAbout(.changelog, openWindow) } label: {
-                Text(AppInfo.version).monospacedDigit().lineLimit(1).fixedSize()
-                    .padding(.horizontal, 7).padding(.vertical, 2)
-                    .background(Capsule().fill(Theme.faint))
+            .help("设置（⌘,）")
+            HStack(spacing: 6) {
+                Button { AppInfo.showAbout(.intro, openWindow) } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "info.circle").frame(width: 16)
+                        Text("关于闪电下载").lineLimit(1).fixedSize()
+                        Spacer(minLength: 0)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .help("关于闪电下载")
+                Button { AppInfo.showAbout(.changelog, openWindow) } label: {
+                    Text(AppInfo.version).monospacedDigit().lineLimit(1).fixedSize()
+                        .padding(.horizontal, 7).padding(.vertical, 2)
+                        .background(Capsule().fill(Theme.faint))
+                }
+                .help("查看更新记录")
             }
-            .help("查看更新记录")
         }
         .buttonStyle(.plain)
         .font(.system(size: 12.5)).foregroundStyle(Theme.sub)
@@ -351,6 +362,7 @@ private struct EmptyState: View {
 
 // MARK: - 任务行
 
+/// 缩略图统一成三种样子：电影海报（模糊铺底 + 整张海报居中）、截帧或站点封面（铺满）、都没有时的标题卡
 private struct Thumb: View {
     @ObservedObject var thumbs: Thumbnails
     let item: Item
@@ -358,11 +370,25 @@ private struct Thumb: View {
     var body: some View {
         let h = width * 9 / 16
         ZStack {
-            if let img = thumbs.image(for: item.id) {
+            if let poster = thumbs.poster(for: item.id) {
+                Image(nsImage: poster).resizable().aspectRatio(contentMode: .fill).blur(radius: width / 10).opacity(0.85)
+                Color.black.opacity(0.12)
+                Image(nsImage: poster).resizable().aspectRatio(contentMode: .fit)
+                    .shadow(color: .black.opacity(0.35), radius: 4)
+                    .padding(.vertical, h * 0.06)
+            } else if let img = thumbs.image(for: item.id) {
                 Image(nsImage: img).resizable().aspectRatio(contentMode: .fill)
             } else {
-                LinearGradient(colors: [Theme.tint.opacity(0.16), Theme.tint.opacity(0.05)], startPoint: .topLeading, endPoint: .bottomTrailing)
-                Image(systemName: item.category.symbol).font(.system(size: width / 6, weight: .light)).foregroundStyle(Theme.tint.opacity(0.7))
+                // 标题卡：琥珀渐变 + 片名，和有图的卡片一样有内容，不是一个空图标
+                LinearGradient(colors: [Theme.tint.opacity(0.85), Theme.tint.opacity(0.55)], startPoint: .topLeading, endPoint: .bottomTrailing)
+                VStack(alignment: .leading, spacing: 4) {
+                    Image(systemName: item.category.symbol).font(.system(size: max(10, width / 14), weight: .semibold))
+                    Text(item.title).font(.system(size: max(10, width / 11), weight: .bold)).lineLimit(width > 150 ? 3 : 2)
+                        .multilineTextAlignment(.leading)
+                }
+                .foregroundStyle(.white.opacity(0.95))
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                .padding(width > 150 ? 14 : 8)
             }
         }
         .frame(width: width, height: h)
@@ -396,6 +422,10 @@ struct TaskRow: View {
             }
             .frame(width: 140, alignment: .trailing)
             HStack(spacing: 6) {
+                if item.canStream {
+                    CircleIconButton(symbol: store.buffering.contains(item.id) ? "hourglass" : "play.tv",
+                                     help: store.buffering.contains(item.id) ? "正在缓冲片头" : "边下边播") { store.playWhileDownloading(item) }
+                }
                 if case .engine = item.source {
                     CircleIconButton(symbol: item.status == .paused || item.isFailed ? "play.fill" : "pause.fill",
                                      help: item.status == .paused ? "继续" : "暂停") { store.togglePause(item) }
@@ -404,7 +434,7 @@ struct TaskRow: View {
                 }
                 CircleIconButton(symbol: "xmark", help: "移除") { store.removalTarget = item }
             }
-            .frame(width: 80, alignment: .trailing)
+            .frame(width: 120, alignment: .trailing)
             .opacity(hover.on || selected ? 1 : 0)
         }
         .padding(.vertical, 10).padding(.horizontal, 10)
@@ -437,6 +467,7 @@ struct TaskRow: View {
     }
     private var secondary: String {
         switch item.status {
+        case .running where store.buffering.contains(item.id): "正在打开播放器"
         case .running where item.checking: "核对已下载的部分"
         case .running: item.avgSpeed > 0 ? remainingText(Double(item.total - item.downloaded) / Double(item.avgSpeed)) : "正在连接"
         case .resolving(let since):
@@ -450,6 +481,11 @@ struct TaskRow: View {
 private extension Item {
     var isResolving: Bool { if case .resolving = status { return true }; return false }
     var isFailed: Bool { if case .failed = status { return true }; return false }
+    /// 下载中的 BT 电影可以边下边播
+    var canStream: Bool {
+        guard case .engine = source, isActive, !isFailed, category == .movie else { return false }
+        return origin == "磁力" || origin == "种子文件"
+    }
 }
 
 private struct ProgressBar: View {
@@ -484,6 +520,7 @@ private struct ItemMenu: View {
             } else if case .engine = item.source, item.isActive {
                 Button(item.status == .paused ? "继续" : "暂停") { store.togglePause(item) }
             }
+            if item.canStream { Button("边下边播") { store.playWhileDownloading(item) } }
             Divider()
             Button("移除…") { store.removalTarget = item }
         }

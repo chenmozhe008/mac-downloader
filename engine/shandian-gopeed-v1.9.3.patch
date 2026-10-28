@@ -1,0 +1,311 @@
+diff --git a/go.mod b/go.mod
+index 7b27ae9..0c4c7c8 100644
+--- a/go.mod
++++ b/go.mod
+@@ -17,6 +17,7 @@ require (
+ 	github.com/matoous/go-nanoid/v2 v2.0.0
+ 	github.com/mattn/go-ieproxy v0.0.12
+ 	github.com/mholt/archives v0.1.5
++	github.com/monkeyWie/goed2k v0.0.0-20260317100435-7a7575cf2447
+ 	github.com/pkg/errors v0.9.1
+ 	github.com/rs/dnscache v0.0.0-20230804202142-fc85eb664529
+ 	github.com/rs/zerolog v1.31.0
+@@ -45,7 +46,6 @@ require (
+ 	github.com/klauspost/pgzip v1.2.6 // indirect
+ 	github.com/mikelolasagasti/xz v1.0.1 // indirect
+ 	github.com/minio/minlz v1.0.1 // indirect
+-	github.com/monkeyWie/goed2k v0.0.0-20260317100435-7a7575cf2447 // indirect
+ 	github.com/nwaples/rardecode/v2 v2.2.0 // indirect
+ 	github.com/onsi/ginkgo/v2 v2.23.4 // indirect
+ 	github.com/pierrec/lz4/v4 v4.1.22 // indirect
+@@ -73,7 +73,7 @@ require (
+ 	github.com/anacrolix/chansync v0.7.0 // indirect
+ 	github.com/anacrolix/dht/v2 v2.23.0 // indirect
+ 	github.com/anacrolix/envpprof v1.5.0 // indirect
+-	github.com/anacrolix/generics v0.2.0 // indirect
++	github.com/anacrolix/generics v0.2.0
+ 	github.com/anacrolix/go-libutp v1.3.2 // indirect
+ 	github.com/anacrolix/log v0.17.1-0.20251118025802-918f1157b7bb // indirect
+ 	github.com/anacrolix/missinggo v1.3.0 // indirect
+@@ -153,7 +153,7 @@ require (
+ 	golang.org/x/net v0.48.0 // indirect
+ 	golang.org/x/sys v0.40.0 // indirect
+ 	golang.org/x/text v0.33.0
+-	golang.org/x/time v0.14.0 // indirect
++	golang.org/x/time v0.14.0
+ 	golang.org/x/tools v0.40.0 // indirect
+ 	gopkg.in/warnings.v0 v0.1.2 // indirect
+ 	lukechampine.com/blake3 v1.4.1 // indirect
+diff --git a/internal/protocol/bt/fetcher.go b/internal/protocol/bt/fetcher.go
+index d9202dd..7211497 100644
+--- a/internal/protocol/bt/fetcher.go
++++ b/internal/protocol/bt/fetcher.go
+@@ -15,9 +15,11 @@ import (
+ 
+ 	"github.com/GopeedLab/gopeed/internal/controller"
+ 	"github.com/GopeedLab/gopeed/internal/fetcher"
++	"github.com/GopeedLab/gopeed/internal/shandian"
+ 	"github.com/GopeedLab/gopeed/pkg/base"
+ 	"github.com/GopeedLab/gopeed/pkg/protocol/bt"
+ 	"github.com/GopeedLab/gopeed/pkg/util"
++	g "github.com/anacrolix/generics"
+ 	"github.com/anacrolix/torrent"
+ 	"github.com/anacrolix/torrent/metainfo"
+ 	"github.com/anacrolix/torrent/storage"
+@@ -42,6 +44,7 @@ type Fetcher struct {
+ 	torrentReady    atomic.Bool
+ 	torrentUpload   atomic.Bool
+ 	torrentDropCtx  context.Context
++	streaming       atomic.Bool
+ 	torrentDropFunc func()
+ 	uploadDoneCh    chan any
+ }
+@@ -77,6 +80,7 @@ func (f *Fetcher) initClient() (err error) {
+ 	cfg.ExtendedHandshakeClientVersion = fmt.Sprintf("Gopeed %s", base.Version)
+ 	cfg.ListenPort = f.config.ListenPort
+ 	cfg.HTTPProxy = f.ctl.GetProxy(f.meta.Req.Proxy)
++	cfg.DownloadRateLimiter = shandian.Limiter // 闪电下载：全局限速
+ 	dnsResolver := &DnsCacheResolver{RefreshTimeout: 5 * time.Minute}
+ 	cfg.TrackerDialContext = dnsResolver.DialContext
+ 	client, err = torrent.NewClient(cfg)
+@@ -134,6 +138,51 @@ func (f *Fetcher) Start() (err error) {
+ 	return
+ }
+ 
++// Stream 闪电下载：边下边播。按播放顺序优先下最大的那个文件（从头往后，外加文件末尾 8 MB，
++// mp4 的索引常在末尾），靠 anacrolix 的 Reader 预读驱动下载顺序；读到的数据丢弃，文件照常写盘
++func (f *Fetcher) Stream() error {
++	if !f.torrentReady.Load() {
++		return fmt.Errorf("torrent not ready")
++	}
++	files := f.torrent.Files()
++	var target *torrent.File
++	for _, i := range f.meta.Opts.SelectFiles {
++		if i < len(files) && (target == nil || files[i].Length() > target.Length()) {
++			target = files[i]
++		}
++	}
++	if target == nil {
++		return fmt.Errorf("no file")
++	}
++	if !f.streaming.CompareAndSwap(false, true) {
++		return nil
++	}
++	ctx := f.torrentDropCtx
++	go func() {
++		tail := target.NewReader()
++		defer tail.Close()
++		if _, err := tail.Seek(max(0, target.Length()-8<<20), io.SeekStart); err == nil {
++			_, _ = io.Copy(io.Discard, &ctxReader{ctx, tail})
++		}
++	}()
++	go func() {
++		defer f.streaming.Store(false)
++		r := target.NewReader()
++		defer r.Close()
++		r.SetReadahead(48 << 20)
++		r.SetResponsive()
++		_, _ = io.Copy(io.Discard, &ctxReader{ctx, r})
++	}()
++	return nil
++}
++
++type ctxReader struct {
++	ctx context.Context
++	r   torrent.Reader
++}
++
++func (c *ctxReader) Read(p []byte) (int, error) { return c.r.ReadContext(c.ctx, p) }
++
+ func (f *Fetcher) Pause() (err error) {
+ 	f.torrent.DisallowDataDownload()
+ 	return
+@@ -451,6 +500,10 @@ func (f *Fetcher) addTorrent(req *base.Request, fromUpload bool) (err error) {
+ 		TorrentDirMaker: func(baseDir string, info *metainfo.Info, infoHash metainfo.Hash) string {
+ 			return f.meta.Opts.Path
+ 		},
++		// 闪电下载：块完成记录落盘 + 不用 .part 文件。anacrolix 用 .part 时启动会把没下完的文件的块全标成未完成
++		// （storage/file-torrent.go setCompletionFromPartFiles），落盘的记录等于白存，重启还是整片重下/重校验
++		PieceCompletion: shandian.PieceCompletion(),
++		UsePartFiles:    g.Some(false),
+ 	})
+ 	f.torrent, _, err = client.AddTorrentSpec(spec)
+ 	if err != nil {
+diff --git a/internal/protocol/http/timeout_reader.go b/internal/protocol/http/timeout_reader.go
+index f23e16e..31cac86 100644
+--- a/internal/protocol/http/timeout_reader.go
++++ b/internal/protocol/http/timeout_reader.go
+@@ -4,6 +4,8 @@ import (
+ 	"context"
+ 	"io"
+ 	"time"
++
++	"github.com/GopeedLab/gopeed/internal/shandian"
+ )
+ 
+ type TimeoutReader struct {
+@@ -33,6 +35,7 @@ func (tr *TimeoutReader) Read(p []byte) (n int, err error) {
+ 
+ 	select {
+ 	case <-done:
++		shandian.Wait(bytesRead) // 闪电下载：全局限速
+ 		return bytesRead, readErr
+ 	case <-ctx.Done():
+ 		return 0, ctx.Err()
+diff --git a/internal/shandian/shandian.go b/internal/shandian/shandian.go
+new file mode 100644
+index 0000000..4d83d69
+--- /dev/null
++++ b/internal/shandian/shandian.go
+@@ -0,0 +1,70 @@
++// Package shandian 是闪电下载对 Gopeed v1.9.3 的补丁：
++//   - BT 块完成记录落盘（原版用 .part 文件时只记内存，内核一重启就整片重新校验）
++//   - 全局下载限速（BT 和 HTTP 共用一个限速器，配置 extra.shandianDownloadLimit，单位 KB/s，0 为不限）
++package shandian
++
++import (
++	"context"
++	"os"
++	"path/filepath"
++	"sync"
++
++	"github.com/anacrolix/torrent/storage"
++	"golang.org/x/time/rate"
++)
++
++// Limiter 全局下载限速器，默认不限
++var Limiter = rate.NewLimiter(rate.Inf, 1<<20)
++
++func SetDownloadLimit(kbps int) {
++	if kbps <= 0 {
++		Limiter.SetLimit(rate.Inf)
++		return
++	}
++	bps := kbps * 1024
++	Limiter.SetBurst(max(bps, 256<<10))
++	Limiter.SetLimit(rate.Limit(bps))
++}
++
++// ApplyExtra 从下载配置的 extra 里读限速
++func ApplyExtra(extra map[string]any) {
++	v, _ := extra["shandianDownloadLimit"].(float64)
++	SetDownloadLimit(int(v))
++}
++
++// Wait 读到 n 字节后按限速等待；不限速时立刻返回
++func Wait(n int) {
++	if n <= 0 || Limiter.Limit() == rate.Inf {
++		return
++	}
++	for n > 0 {
++		c := min(n, Limiter.Burst())
++		_ = Limiter.WaitN(context.Background(), c)
++		n -= c
++	}
++}
++
++var (
++	pcOnce sync.Once
++	pc     storage.PieceCompletion
++)
++
++// 所有种子共用一个落盘的块完成记录；包一层不让单个种子关闭时把它关掉
++type sharedCompletion struct{ storage.PieceCompletion }
++
++func (sharedCompletion) Close() error { return nil }
++
++// PieceCompletion 放在内核工作目录的 data/piece-completion 下（App 把工作目录设为内核目录）
++func PieceCompletion() storage.PieceCompletion {
++	pcOnce.Do(func() {
++		dir, _ := os.Getwd()
++		d := filepath.Join(dir, "data", "piece-completion")
++		_ = os.MkdirAll(d, 0o700)
++		if c, err := storage.NewBoltPieceCompletion(d); err == nil {
++			pc = sharedCompletion{c}
++		} else {
++			pc = storage.NewMapPieceCompletion()
++		}
++	})
++	return pc
++}
+diff --git a/pkg/download/downloader.go b/pkg/download/downloader.go
+index 382a5b7..4dbed0d 100644
+--- a/pkg/download/downloader.go
++++ b/pkg/download/downloader.go
+@@ -1,6 +1,7 @@
+ package download
+ 
+ import (
++	"github.com/GopeedLab/gopeed/internal/shandian"
+ 	"errors"
+ 	"fmt"
+ 	"math"
+@@ -154,6 +155,7 @@ func (d *Downloader) Setup() error {
+ 	}
+ 	if exist {
+ 		d.cfg.DownloaderStoreConfig = &cfg
++		shandian.ApplyExtra(cfg.Extra)
+ 	} else {
+ 		d.cfg.DownloaderStoreConfig = &base.DownloaderStoreConfig{
+ 			FirstLoad: true,
+@@ -873,6 +875,19 @@ func (d *Downloader) emit(eventKey EventKey, task *Task, errs ...error) {
+ 	}
+ }
+ 
++// Stream 闪电下载：边下边播（只对 BT 任务）
++func (d *Downloader) Stream(id string) error {
++	task := d.GetTask(id)
++	if task == nil {
++		return ErrTaskNotFound
++	}
++	s, ok := task.fetcher.(interface{ Stream() error })
++	if !ok || task.fetcher == nil {
++		return fmt.Errorf("not supported")
++	}
++	return s.Stream()
++}
++
+ func (d *Downloader) GetTask(id string) *Task {
+ 	d.lock.Lock()
+ 	defer d.lock.Unlock()
+@@ -951,6 +966,7 @@ func (d *Downloader) GetConfig() (*base.DownloaderStoreConfig, error) {
+ 
+ func (d *Downloader) PutConfig(v *base.DownloaderStoreConfig) error {
+ 	d.cfg.DownloaderStoreConfig = v
++	shandian.ApplyExtra(v.Extra)
+ 	return d.storage.Put(bucketConfig, "config", v)
+ }
+ 
+diff --git a/pkg/rest/api.go b/pkg/rest/api.go
+index 6c72bfb..3511643 100644
+--- a/pkg/rest/api.go
++++ b/pkg/rest/api.go
+@@ -110,6 +110,16 @@ func PauseTask(w http.ResponseWriter, r *http.Request) {
+ 	WriteJson(w, model.NewNilResult())
+ }
+ 
++// StreamTask 闪电下载：边下边播
++func StreamTask(w http.ResponseWriter, r *http.Request) {
++	vars := mux.Vars(r)
++	if err := Downloader.Stream(vars["id"]); err != nil {
++		WriteJson(w, model.NewErrorResult(err.Error()))
++		return
++	}
++	WriteJson(w, model.NewNilResult())
++}
++
+ func PauseTasks(w http.ResponseWriter, r *http.Request) {
+ 	filter, errResult := parseFilter(r)
+ 	if errResult != nil {
+diff --git a/pkg/rest/server.go b/pkg/rest/server.go
+index a863a90..efbcc7b 100644
+--- a/pkg/rest/server.go
++++ b/pkg/rest/server.go
+@@ -127,6 +127,7 @@ func BuildServer(startCfg *model.StartConfig) (*http.Server, net.Listener, error
+ 	r.Methods(http.MethodPut).Path("/api/v1/tasks/{id}/pause").HandlerFunc(PauseTask)
+ 	r.Methods(http.MethodPut).Path("/api/v1/tasks/pause").HandlerFunc(PauseTasks)
+ 	r.Methods(http.MethodPut).Path("/api/v1/tasks/{id}/continue").HandlerFunc(ContinueTask)
++	r.Methods(http.MethodPut).Path("/api/v1/tasks/{id}/stream").HandlerFunc(StreamTask)
+ 	r.Methods(http.MethodPut).Path("/api/v1/tasks/continue").HandlerFunc(ContinueTasks)
+ 	r.Methods(http.MethodDelete).Path("/api/v1/tasks/{id}").HandlerFunc(DeleteTask)
+ 	r.Methods(http.MethodDelete).Path("/api/v1/tasks").HandlerFunc(DeleteTasks)

@@ -149,6 +149,23 @@ final class DownloadStore: ObservableObject {
         }
     }
 
+    /// 新内核不用 .part 文件（见 engine/ 补丁）：换内核前把没下完的 BT 文件改回正式名字，
+    /// 新内核找得到已下的数据，校验一次就接着下，不用重下
+    nonisolated static func promotePartFiles(_ tasks: [EngineTask]) {
+        let fm = FileManager.default
+        for t in tasks where t.protocol == "bt" && t.status != "done" {
+            let dir = URL(fileURLWithPath: t.meta.opts?.path ?? "")
+            let resName = t.meta.res?.name ?? ""
+            for f in t.meta.res?.files ?? [] {
+                let rel = [f.path ?? "", f.name].filter { !$0.isEmpty }.joined(separator: "/")
+                for base in [dir.appendingPathComponent(resName).appendingPathComponent(rel), dir.appendingPathComponent(rel)] {
+                    let part = URL(fileURLWithPath: base.path + ".part")
+                    if fm.fileExists(atPath: part.path), !fm.fileExists(atPath: base.path) { try? fm.moveItem(at: part, to: base) }
+                }
+            }
+        }
+    }
+
     /// 路径所在的盘插着没有（本机路径总是在）
     nonisolated static func volumeAvailable(_ path: String?) -> Bool {
         guard let path else { return true }
@@ -211,6 +228,18 @@ final class DownloadStore: ObservableObject {
     private func startEngine() async {
         engineState = .starting
         await LocalProxy.check()
+        // App 带了新内核而旧内核还在跑：暂停→记下在下的→停旧的→换新的（start 里装）→续上
+        if host.bundledEngineIsNewer, await host.client.isAlive() {
+            let tasks = (try? await host.client.tasks()) ?? []
+            let running = tasks.filter { $0.status == "running" || $0.status == "ready" || $0.status == "wait" }.map(\.id)
+            try? await host.client.pauseAll()
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            host.kill()
+            Self.promotePartFiles(tasks)
+            var resume = UserDefaults.standard.stringArray(forKey: "resumeOnLaunch") ?? []
+            resume.append(contentsOf: running.filter { !resume.contains($0) })
+            UserDefaults.standard.set(resume, forKey: "resumeOnLaunch")
+        }
         switch await host.start() {
         case .running:
             engineState = .running
@@ -269,6 +298,9 @@ final class DownloadStore: ObservableObject {
         // 从未完成变成完成；小文件一个轮询周期就下完，第一次出现就是完成的也算（启动时已有的老任务除外）
         for i in all where i.status == .done && (lastStatus[i.id].map { $0 != .done } ?? engineSeeded) { didFinish(i) }
         for i in all { lastStatus[i.id] = i.status }
+        for i in all where i.category == .movie && (i.origin == "磁力" || i.origin == "种子文件") {
+            thumbs.requestPoster(id: i.id, title: i.title)
+        }
         for i in all where i.category == .movie || i.category == .other {
             if let f = i.file, FileSelection.videoExt.contains(f.pathExtension.lowercased()) {
                 thumbs.requestFrame(id: i.id, video: f, progress: i.progress)
@@ -511,6 +543,49 @@ final class DownloadStore: ObservableObject {
         }
     }
 
+    /// 能边下边播的播放器（能播正在写入的文件）；QuickTime 不行
+    static var streamPlayer: URL? {
+        ["/Applications/IINA.app", "/Applications/VLC.app"].map(URL.init(fileURLWithPath:))
+            .first { FileManager.default.fileExists(atPath: $0.path) }
+    }
+
+    /// 正在缓冲、等着打开播放器的任务（防止连点开出好几个播放器）
+    @Published private(set) var buffering = Set<String>()
+    /// 缓冲进度（片头已下到的比例），显示在任务行上
+    @Published private(set) var bufferProgress: [String: Double] = [:]
+
+    /// 边下边播（参照迅雷）：播放器直接连内核的播放地址，要哪段内核先下哪段再送过去，
+    /// 不用先等片头，拖进度条也能直接跳；同时让内核按顺序往后下，播着不卡
+    func playWhileDownloading(_ item: Item) {
+        guard case .engine(let id) = item.source, let f = item.file else { return }
+        guard !buffering.contains(item.id) else { return }   // 连点不重复开
+        guard let player = Self.streamPlayer else { notice = "边下边播需要 IINA 或 VLC 播放器"; return }
+        buffering.insert(item.id)
+        bufferProgress[item.id] = 0
+        selectedID = item.id
+        Task {
+            defer { buffering.remove(item.id); bufferProgress[item.id] = nil }
+            if item.status == .paused { try? await host.client.resume(id) }
+            do { try await host.client.stream(id) } catch { notice = "这个任务暂不支持边下边播"; return }
+            guard let url = host.client.playURL(id: id, fileName: f.lastPathComponent) else { return }
+            NSWorkspace.shared.open([url], withApplicationAt: player, configuration: NSWorkspace.OpenConfiguration(), completionHandler: nil)
+            try? await Task.sleep(nanoseconds: 2_000_000_000)   // 按钮上的「正在打开」留一会儿
+        }
+    }
+
+    /// 文件开头 4 MB 已下到的比例（按 256 KB 一段抽查；BT 没下到的地方读出来是 0）
+    nonisolated static func headProgress(_ f: URL) -> Double {
+        guard let h = try? FileHandle(forReadingFrom: f) else { return 0 }
+        defer { try? h.close() }
+        var got = 0
+        for block in 0..<16 {
+            try? h.seek(toOffset: UInt64(block) << 18)
+            guard let d = try? h.read(upToCount: 4096), !d.isEmpty else { break }
+            if !d.allSatisfy({ $0 == 0 }) { got += 1 }
+        }
+        return Double(got) / 16
+    }
+
     func reveal(_ item: Item) {
         guard let f = item.file else { return }
         if FileManager.default.fileExists(atPath: f.path) { NSWorkspace.shared.activateFileViewerSelecting([f]) }
@@ -681,7 +756,10 @@ final class DownloadStore: ObservableObject {
     }
 
     static func displayName(_ link: String) -> String {
-        if let comps = URLComponents(string: link), let dn = comps.queryItems?.first(where: { $0.name == "dn" })?.value, !dn.isEmpty { return dn }
+        // 磁力 dn 里的空格常写成 +（表单编码），URLComponents 不会转
+        if let comps = URLComponents(string: link), let dn = comps.queryItems?.first(where: { $0.name == "dn" })?.value, !dn.isEmpty {
+            return dn.replacingOccurrences(of: "+", with: " ")
+        }
         if link.lowercased().hasSuffix(".torrent") { return (link as NSString).lastPathComponent.replacingOccurrences(of: ".torrent", with: "") }
         return URL(string: link)?.lastPathComponent.removingPercentEncoding ?? link
     }

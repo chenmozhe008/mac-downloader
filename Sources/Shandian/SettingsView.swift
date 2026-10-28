@@ -8,6 +8,8 @@ enum Prefs {
     static let maxRunningKey = "maxRunning"
     static let preventSleepKey = "preventSleep"
     static let notifyKey = "notifyOnFinish"
+    static let downloadLimitKey = "downloadLimit"   // KB/s，0 不限
+    static var downloadLimit: Int { UserDefaults.standard.integer(forKey: downloadLimitKey) }
 
     static var maxRunning: Int { let v = UserDefaults.standard.integer(forKey: maxRunningKey); return v > 0 ? v : 5 }
     static var preventSleep: Bool { UserDefaults.standard.object(forKey: preventSleepKey) as? Bool ?? true }
@@ -38,6 +40,7 @@ struct SettingsView: View {
     @AppStorage(Prefs.maxRunningKey) private var maxRunning = 5
     @AppStorage(Prefs.preventSleepKey) private var preventSleep = true
     @AppStorage(Prefs.notifyKey) private var notify = true
+    @AppStorage(Prefs.downloadLimitKey) private var limit = 0
     @AppStorage(ClipboardWatcher.enabledKey) private var watchClipboard = true
     @AppStorage(NewTaskPanels.askKey) private var confirmNew = true
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
@@ -57,6 +60,13 @@ struct SettingsView: View {
                     ForEach([1, 2, 3, 5, 8, 10], id: \.self) { Text("\($0) 个任务").tag($0) }
                 }
                 .onChange(of: maxRunning) { store.reapplyEngineSettings() }
+                Picker("下载限速", selection: $limit) {
+                    Text("不限速").tag(0)
+                    ForEach([512, 1024, 2048, 5120, 10240], id: \.self) { kb in
+                        Text(kb < 1024 ? "\(kb) KB/s" : "\(kb / 1024) MB/s").tag(kb)
+                    }
+                }
+                .onChange(of: limit) { store.reapplyEngineSettings() }
                 Toggle("新建任务时显示确认框", isOn: $confirmNew)
                 Toggle("复制链接后弹出下载提示", isOn: $watchClipboard)
             }

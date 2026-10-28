@@ -6,6 +6,9 @@ import Foundation
 @MainActor
 final class Thumbnails: ObservableObject {
     @Published private(set) var images: [String: NSImage] = [:]
+    /// 电影海报（竖版），和截帧分开存：卡片上海报要整张显示，截帧铺满
+    @Published private(set) var posters: [String: NSImage] = [:]
+    private var posterTried = Set<String>()
     private var attempts: [String: (count: Int, last: Date)] = [:]
     private var inFlight = Set<String>()
     private let dir = EngineConfig.supportDir.appendingPathComponent("thumbs")
@@ -46,6 +49,42 @@ final class Thumbnails: ObservableObject {
                 self.inFlight.remove(id)
                 if let img { self.images[id] = img }
             }
+        }
+    }
+
+    func poster(for id: String) -> NSImage? {
+        if let img = posters[id] { return img }
+        if let img = NSImage(contentsOf: dir.appendingPathComponent("\(id).poster.jpg")) { posters[id] = img; return img }
+        return nil
+    }
+
+    /// 电影海报：用片名查豆瓣（标题里带年份就按年份挑），取中号海报。每次启动每部只查一次
+    func requestPoster(id: String, title: String) {
+        guard poster(for: id) == nil, !posterTried.contains(id) else { return }
+        posterTried.insert(id)
+        let year = title.range(of: #"(19|20)\d{2}"#, options: .regularExpression).map { String(title[$0]) }
+        let query = title.replacingOccurrences(of: #"\s*(19|20)\d{2}\s*"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty, var c = URLComponents(string: "https://movie.douban.com/j/subject_suggest") else { return }
+        c.queryItems = [URLQueryItem(name: "q", value: query)]
+        guard let api = c.url else { return }
+        let out = dir.appendingPathComponent("\(id).poster.jpg")
+        Task.detached {
+            struct Hit: Decodable { var img: String?; var type: String?; var year: String? }
+            var req = URLRequest(url: api, timeoutInterval: 10)
+            req.setValue("Mozilla/5.0 (Macintosh)", forHTTPHeaderField: "User-Agent")
+            guard let (data, _) = try? await URLSession.shared.data(for: req),
+                  let hits = try? JSONDecoder().decode([Hit].self, from: data) else { return }
+            let usable = hits.filter { $0.img != nil && ($0.type == "movie" || $0.type == "tv") }
+            guard let hit = usable.first(where: { year != nil && $0.year == year }) ?? (year == nil ? usable.first : nil),
+                  let src = hit.img?.replacingOccurrences(of: "s_ratio_poster", with: "m_ratio_poster"),
+                  let imgURL = URL(string: src) else { return }
+            var ir = URLRequest(url: imgURL, timeoutInterval: 15)
+            ir.setValue("https://movie.douban.com/", forHTTPHeaderField: "Referer")   // 豆瓣图片要带来源页
+            guard let (img, resp) = try? await URLSession.shared.data(for: ir), (resp as? HTTPURLResponse)?.statusCode == 200,
+                  let image = NSImage(data: img) else { return }
+            try? img.write(to: out)
+            await MainActor.run { self.posters[id] = image }
         }
     }
 

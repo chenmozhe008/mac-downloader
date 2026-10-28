@@ -119,13 +119,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 
     /// 磁力链接、.torrent 文件用本 App 打开时走这里；
-    /// 另有 shandian://add?url=<链接>（可多个 url），给脚本、skill、书签用：`open -g "shandian://add?url=…"` 不抢焦点
+    /// 另有 shandian://add?url=<链接>（可多个 url，加 confirm=0 不弹确认框），给脚本、skill、书签用：`open -g "shandian://add?url=…"` 不抢焦点
     func application(_ application: NSApplication, open urls: [URL]) {
         MainActor.assumeIsolated {
             for u in urls {
                 if u.scheme == "shandian" {
-                    let links = URLComponents(url: u, resolvingAgainstBaseURL: false)?.queryItems?.filter { $0.name == "url" }.compactMap(\.value) ?? []
-                    store?.request(links)
+                    let items = URLComponents(url: u, resolvingAgainstBaseURL: false)?.queryItems ?? []
+                    let links = items.filter { $0.name == "url" }.compactMap(\.value)
+                    // confirm=0：脚本 / skill 批量投递，不弹确认框，按默认规则直接下
+                    if items.contains(where: { $0.name == "confirm" && $0.value == "0" }) {
+                        links.forEach { store?.start(link: $0) }
+                    } else {
+                        store?.request(links)
+                    }
                 } else {
                     store?.add(link: u.isFileURL ? u.path : u.absoluteString)
                     NSApp.activate(ignoringOtherApps: true)

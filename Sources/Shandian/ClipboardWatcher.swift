@@ -78,27 +78,32 @@ private struct ClipboardPopup: View {
         let first = links[0]
         let kind = LinkKind.of(first)
         HStack(alignment: .top, spacing: 12) {
-            Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 40, height: 40)
+            Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 52, height: 52)
             VStack(alignment: .leading, spacing: 4) {
                 Text(links.count > 1 ? "检测到 \(links.count) 个下载链接" : "检测到下载链接")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 15, weight: .semibold))
                 Text(PrettyTitle.clean(DownloadStore.displayName(first)))
-                    .font(.system(size: 12.5)).lineLimit(1).truncationMode(.middle)
+                    .font(.system(size: 14)).lineLimit(1).truncationMode(.middle)
                 if let kind {
                     Text("\(kind.label)　存到「\(Folders.displayName(Folders.directory(for: kind)))」")
-                        .font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(1)
+                        .font(.system(size: 12.5)).foregroundStyle(.secondary).lineLimit(1)
                 }
                 HStack(spacing: 8) {
-                    Button(links.count > 1 ? "全部下载" : "下载", action: onDownload)
-                        .buttonStyle(.borderedProminent).tint(Theme.tint).controlSize(.small)
-                    Button("忽略", action: onIgnore).controlSize(.small)
+                    // 浮窗不是活动窗口，系统按钮会变灰；自己画琥珀色，始终醒目
+                    Button(action: onDownload) {
+                        Text(links.count > 1 ? "全部下载" : "下载").font(.system(size: 14, weight: .semibold)).foregroundStyle(.white)
+                            .frame(minWidth: 72).padding(.horizontal, 12).frame(height: 30)
+                            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.tint))
+                    }
+                    .buttonStyle(.plain)
+                    Button("忽略", action: onIgnore).controlSize(.large)
                 }
                 .padding(.top, 4)
             }
             Spacer(minLength: 0)
         }
-        .padding(14)
-        .frame(width: 340)
+        .padding(18)
+        .frame(width: 420)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Color.primary.opacity(0.08)))
     }

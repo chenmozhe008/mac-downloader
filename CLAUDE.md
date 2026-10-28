@@ -7,9 +7,11 @@
 
 ## 架构（不自己写下载引擎）
 
-- **内核**：Gopeed headless（`gopeed-web` v1.9.3 arm64），REST API `127.0.0.1:9999`，请求头 `X-Api-Token`；token 由 App 首次运行生成，存 `~/Library/Application Support/ShandianDownload/engine.json`（600 权限，不在仓库里），脚本也读这里
+- **内核**：Gopeed headless v1.9.3 **打了闪电下载补丁**（`engine/shandian-gopeed-v1.9.3.patch`，`script/build_engine.sh` 编译，产物打进 App、启动时换上），REST API `127.0.0.1:9999`，请求头 `X-Api-Token`；token 由 App 首次运行生成，存 `~/Library/Application Support/ShandianDownload/engine.json`（600 权限，不在仓库里），脚本也读这里
   - 内核程序和任务库在本机 `Application Support/ShandianDownload/engine/`（10-28 用户同意从移动硬盘挪来；硬盘上的旧副本 `/Volumes/Jack Feng/Applications/MacDownloader/` 没删，等用户定）
-  - App 启动时没有就拉起；**退出 App 只暂停任务、不关内核**（内核一重启就整片重新校验，见「已知事项」）
+  - App 启动时没有就拉起；退出 App 只暂停任务、不关内核
+  - 补丁内容：①块完成记录落盘（bolt，`engine/data/piece-completion`）+ 关掉 .part 文件——anacrolix 用 .part 时启动会把没下完文件的块全标未完成，记录等于白存；②全局限速（config.extra.shandianDownloadLimit，KB/s，BT 和直链共用）；③`PUT /tasks/{id}/stream` 顺序下载、`GET /play/{id}/{key}/{名字}` 边下边送（key=sha256("shandian-play:"+token+":"+id) 前 24 位，播放器带不了请求头）；④新建任务前丢掉「解析」留下的同种子副本，否则文件写到默认目录
+  - Go 工具链、Gopeed 源码、编译缓存都在移动硬盘 `Applications/ShandianBuild/`（不装全局）；本机命令行工具链接器和 SDK 对不上，编译用 CGO_ENABLED=0
   - 推出移动硬盘：DiskArbitration 推出审批回调里查内核是否开着那块盘上的文件（`EngineHost.holdsFiles`），开着就暂停→结束内核→批准→2 秒后重启，插回自动续
   - 只监听 127.0.0.1，不开 0.0.0.0
 - **视频网站**：yt-dlp + ffmpeg，境外站走代理 7897，B 站/微博等国内站直连。**yt-dlp 用 App 自带的**（`Application Support/ShandianDownload/bin/yt-dlp`，首次启动下载官方 `yt-dlp_macos`、每 7 天 `-U`），brew 里的只做兜底——视频站改版快，10-27 实测 brew 的 2025-04 版下 B 站 412
@@ -39,7 +41,8 @@
 
 - `script/engine.sh start|stop|status|configure`：启停内核；`configure` 写下载设置（每次内核重装/任务库重建后跑一次）
 - `script/dl.sh "<链接或本地.torrent>"`：统一入口，自动分流
-- `script/build_app.sh [run|package]`：编译打包成 `dist/闪电下载.app`
+- `script/build_app.sh [run|package]`：编译打包成 `dist/闪电下载.app`（会带上已编好的内核）
+- `script/build_engine.sh`：下 Go、拉 Gopeed v1.9.3、打补丁、编译内核
 
 ## 下载设置（`configure` 写入，改值先改这里的说明）
 
@@ -66,9 +69,9 @@
 - Gopeed API 新建任务参数是 `opts`（不是 `opt`），写错不报错、路径静默失效
 - BT 客户端全内核只建一次（`internal/protocol/bt/fetcher.go initClient`），`cfg.HTTPProxy` 取**第一个** BT 任务的代理设置，之后改全局代理不生效、要重启内核。所以磁力/种子任务绝不能带 `req.proxy`（10-28 读 v1.9.3 源码确认）
 - 上传：内核 `cfg.Seed = true`，上传没被关；《求救信号》上传一直 0 是对方不向我们要数据（迅雷用户为主），同时下的《希望》传了 49 MB。本机路由器 SSDP 发现不到 UPnP 网关（10-28），IPv4 下别人连不进来，要在路由器里开 UPnP；Mac 防火墙已放行 gopeed
-- 重启内核后会把已下部分整个重新校验一遍（读盘约 90 MB/s），App 显示「正在校验」（`checkFloor`）。根因：Gopeed 用 .part 文件，anacrolix 此时块完成记录只在内存（NewFileOpts → NewMapPieceCompletion）；内核不重启时暂停/继续不校验。改法见 docs/PLAN.md 第 8 项（待用户定）
-- 内核没有限速配置项（v1.9.3 config 里没有），偏好设置不做限速
-- `download-movie` skill 暂不改（用户 10-27 说：测稳了再改）
+- 原版重启内核会整片重新校验（Gopeed 用 .part 文件 + anacrolix 块记录只在内存），已由内核补丁解决；App 里「正在校验」（`checkFloor`）显示逻辑保留，换内核那次用得上
+- 限速是补丁加的（原版没有）
+- `download-movie` skill 10-28 改成 `dl_shandian.sh` → `shandian://add?confirm=0&url=…`（不弹确认框）；闪电下载不可用时退回迅雷 `dl_fast.sh`
 
 ## 目录
 

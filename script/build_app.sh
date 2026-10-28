@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # build_app.sh [run|package] —— 编译、打包成 dist/闪电下载.app（run 时顺便打开）
 set -euo pipefail
-APP_NAME="闪电下载"; EXECUTABLE_NAME="Shandian"; BUNDLE_ID="io.github.chenmozhe008.shandian"; APP_VERSION="0.8.0"
+APP_NAME="闪电下载"; EXECUTABLE_NAME="Shandian"; BUNDLE_ID="io.github.chenmozhe008.shandian"; APP_VERSION="0.9.0"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
 APP="$ROOT/dist/$APP_NAME.app"
 CODESIGN_IDENTITY="${CODESIGN_IDENTITY:-Apple Development}"
@@ -26,6 +26,9 @@ cp "$BIN" "$APP/Contents/MacOS/$EXECUTABLE_NAME"
 cp "$ICNS" "$APP/Contents/Resources/AppIcon.icns"
 cp "$ROOT/CHANGELOG.md" "$APP/Contents/Resources/CHANGELOG.md"  # 「关于 → 更新记录」直接读它
 cp -R "$ROOT/browser-extension" "$APP/Contents/Resources/BrowserExtension"  # 启动时拷到 Application Support（浏览器认固定路径）
+# 打过补丁的内核（script/build_engine.sh 编出来的）；App 启动时发现和本机装的不一样就换上
+ENGINE_BIN="/Volumes/Jack Feng/Applications/ShandianBuild/gopeed-shandian"
+if [ -x "$ENGINE_BIN" ]; then cp "$ENGINE_BIN" "$APP/Contents/Resources/gopeed"; else echo "提醒：没找到内核 $ENGINE_BIN，先跑 script/build_engine.sh" >&2; fi
 mkdir -p "$APP/Contents/Resources/zh-Hans.lproj"  # 声明中文，系统菜单（文件、编辑、窗口）才显示中文
 # 强调色（琥珀）：侧栏选中行、按钮等系统控件跟随它；SwiftPM 不编译 xcassets，这里用 actool 单独编
 xcrun actool "$ROOT/Resources/Assets.xcassets" --compile "$APP/Contents/Resources" --platform macosx \

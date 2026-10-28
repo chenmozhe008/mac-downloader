@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// 下载内核（Gopeed headless）的位置与鉴权。内核二进制和任务库在移动硬盘，token 在 App 配置目录。
@@ -134,6 +135,15 @@ final class EngineClient: @unchecked Sendable {
 
     func pause(_ id: String) async throws { let _: String? = try await call("PUT", "tasks/\(id)/pause") }
     func resume(_ id: String) async throws { let _: String? = try await call("PUT", "tasks/\(id)/continue") }
+    /// 边下边送的播放地址（内核补丁 /play/{id}/{key}/{文件名}）；key 由 token 和任务 id 派生，和内核里 shandian.PlayKey 一致
+    func playURL(id: String, fileName: String) -> URL? {
+        let digest = SHA256.hash(data: Data("shandian-play:\(token):\(id)".utf8)).map { String(format: "%02x", $0) }.joined()
+        let name = fileName.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? "video"
+        return URL(string: "/play/\(id)/\(digest.prefix(24))/\(name)", relativeTo: base)?.absoluteURL  // 以 / 开头，落在主机根路径，不在 /api/v1 下
+    }
+
+    /// 边下边播（闪电下载给内核加的接口）
+    func stream(_ id: String) async throws { let _: String? = try await call("PUT", "tasks/\(id)/stream") }
     func pauseAll() async throws { let _: String? = try await call("PUT", "tasks/pause") }
     func resumeAll() async throws { let _: String? = try await call("PUT", "tasks/continue") }
     func delete(_ id: String, withFiles: Bool) async throws {
@@ -151,9 +161,27 @@ final class EngineHost: @unchecked Sendable {
 
     enum StartResult { case running, failed(String) }
 
+    /// App 里带的（打过补丁的）内核和本机装的不一样
+    var bundledEngineIsNewer: Bool {
+        guard let bundled = Bundle.main.resourceURL?.appendingPathComponent("gopeed"),
+              let a = try? Data(contentsOf: bundled, options: .mappedIfSafe) else { return false }
+        guard let b = try? Data(contentsOf: EngineConfig.binary, options: .mappedIfSafe) else { return true }
+        return a != b
+    }
+
+    /// 换上 App 里带的内核（调用前内核要已停）
+    func installBundledEngine() {
+        guard let bundled = Bundle.main.resourceURL?.appendingPathComponent("gopeed") else { return }
+        let fm = FileManager.default
+        try? fm.createDirectory(at: EngineConfig.engineDir, withIntermediateDirectories: true)
+        try? fm.removeItem(at: EngineConfig.binary)
+        try? fm.copyItem(at: bundled, to: EngineConfig.binary)
+    }
+
     func start() async -> StartResult {
         if await client.isAlive() { return .running }
         migrateFromDisk()
+        if bundledEngineIsNewer { installBundledEngine() }
         guard FileManager.default.isExecutableFile(atPath: EngineConfig.binary.path) else { return .failed("内核程序缺失") }
         let dataDir = EngineConfig.engineDir.appendingPathComponent("data")
         try? FileManager.default.createDirectory(at: dataDir, withIntermediateDirectories: true)
@@ -249,6 +277,10 @@ extension EngineClient {
         guard var cfg = try? await rawConfig() else { return }
         cfg["downloadDir"] = defaultDir
         cfg["maxRunning"] = Prefs.maxRunning
+        // 限速（闪电下载给内核加的，BT 和直链共用），0 为不限
+        var extra = cfg["extra"] as? [String: Any] ?? [:]
+        extra["shandianDownloadLimit"] = Prefs.downloadLimit
+        cfg["extra"] = extra
         // 全局代理关：开着时 BT 连接也走 Clash（见 LocalProxy 说明）；HTTP 任务各自带代理设置
         cfg["proxy"] = ["enable": false, "system": false, "scheme": "http", "host": "\(LocalProxy.host):\(LocalProxy.port)", "usr": "", "pwd": ""]
         var proto = cfg["protocolConfig"] as? [String: Any] ?? [:]

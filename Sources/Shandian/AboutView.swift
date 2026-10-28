@@ -141,8 +141,9 @@ private struct IntroPage: View {
     ]
     private let sources = ["磁力", "种子", "ed2k", "HTTP 直链", "网盘直链", "B 站", "YouTube", "X", "微博"]
     private let notes: [(String, String)] = [
-        ("doc.on.clipboard", "复制链接后在窗口中按 ⌘V 即可下载，也可拖入链接或种子文件。"),
-        ("externaldrive", "磁力、种子、ed2k 和直链由移动硬盘上的下载内核处理，需连接移动硬盘。"),
+        ("doc.on.clipboard", "复制链接后在窗口中按 ⌘V 即可下载，也可拖入链接或种子文件；装好浏览器扩展后，网页上点下载会直接交给闪电下载。"),
+        ("externaldrive", "电影默认存到移动硬盘；硬盘未连接时暂存到「下载 › 电影」。推出硬盘前会自动暂停存在上面的任务。"),
+        ("play.tv", "下载中的电影可「边下边播」：先下片头，用 IINA 或 VLC 打开。"),
         ("cloud", "网盘下载需先在浏览器中获取直链，速度受网盘自身限速影响。"),
         ("gauge.with.dots.needle.33percent", "下载速度取决于资源热度、来源数量和网络环境。"),
     ]
@@ -175,6 +176,7 @@ private struct IntroPage: View {
             VStack(alignment: .leading, spacing: 12) {
                 SectionTitle("支持的来源")
                 FlowChips(items: sources)
+                Text("抖音、小红书暂不支持（需要登录信息，正在适配）。").font(.system(size: 12.5)).foregroundStyle(Theme.sub)
             }
             VStack(alignment: .leading, spacing: 12) {
                 SectionTitle("使用说明")
