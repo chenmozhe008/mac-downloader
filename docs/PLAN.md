@@ -76,7 +76,7 @@
   - 已做：App 里 PikPak 客户端（PikPak.swift）、扩展「关联到闪电下载」（已关联成功，网页端 client YUMx5nI8ZU8Ap8pm）、BT 慢 3 分钟自动交云盘、拉回后删云端
   - 卡点：网页端签名常量（peach/AList 的盐和固定时间戳）已失效，`captcha/init` 报 invalid captcha_sign；要从当前网页脚本（mypikpak.com/drive/*.js，搜 YUMx5nI8ZU8Ap8pm / captcha_sign）重新取盐和时间戳；网页端每个 drive 请求都要 X-Captcha-Token
   - 注意：关联时扩展会删掉网页那份登录，但 10-28 用户在 Chrome 里又登录着——两边都刷新会互相作废，接好后要提醒用户
-- [ ] **新片厂（下次先做）**：扩展已能抓到真实地址（xpccdn.com 直链），但内核下载 403。10-28 查清：这个 CDN 对 HEAD 和不带 Range 的 GET 回 403，带 `Range: bytes=0-` 才 206（curl、Go 标准库带 Range 都正常）。改内核补丁：HTTP 解析/首个请求一律带 `Range: bytes=0-`（看 internal/protocol/http/fetcher.go 的 resolve），改完用列表里两个暂停的新片厂任务验证
+- [x] **新片厂**（0.14.0 补丁⑤，用户 10-28 确认能下）：扩展已能抓到真实地址（xpccdn.com 直链），但内核下载 403。10-28 查清：这个 CDN 对 HEAD 和不带 Range 的 GET 回 403，带 `Range: bytes=0-` 才 206（curl、Go 标准库带 Range 都正常）。改内核补丁：HTTP 解析/首个请求一律带 `Range: bytes=0-`（看 internal/protocol/http/fetcher.go 的 resolve），改完用列表里两个暂停的新片厂任务验证
 - [x] 小红书：能下（走 yt-dlp + 浏览器 Cookie，读网页约 19 秒）；10-28 扩展改成先读页面 __INITIAL_STATE__ 里的视频直链（扩展 1.7.0，未实测）；封面 http→https，取不到就截帧
 - [x] 「退出闪电下载」：只是脚本 quit 被拦（加 applicationShouldTerminate 已修），菜单退出一直正常
 - [x] 测试残留已清（10-28 用户同意）

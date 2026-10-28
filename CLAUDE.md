@@ -45,7 +45,7 @@
 
 - `script/engine.sh start|stop|status|configure`：启停内核；`configure` 写下载设置（每次内核重装/任务库重建后跑一次）
 - `script/dl.sh "<链接或本地.torrent>"`：统一入口，自动分流
-- `script/build_app.sh [run|package]`：编译打包成 `dist/闪电下载.app`（会带上已编好的内核）
+- `script/build_app.sh [run|package]`：编译打包成 `dist/闪电下载.app`（会带上已编好的内核）。**不带参数＝run：会杀掉并重开用户正在用的 App**（App 就从 dist 运行）；只想编译验证用 `package`
 - `script/build_engine.sh`：下 Go、拉 Gopeed v1.9.3、打补丁、编译内核
 
 ## 下载设置（`configure` 写入，改值先改这里的说明）
