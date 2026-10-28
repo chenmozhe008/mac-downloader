@@ -121,6 +121,7 @@ final class DownloadStore: ObservableObject {
         var id: String; var title: String; var link: String; var dir: String
         var engineID: String?; var partial: String?; var total: Int64
         var taskID = ""; var fileID = ""; var progress = 0; var createdAt = Date()
+        var pulling: [String]?      // 已在从云盘拉回的内核任务；都下完后删云端文件（免费账号只有 6 GB）
     }
     private var cloudJobs: [CloudJob] = DownloadStore.loadCloud()
     private var cloudPolling = false
@@ -377,7 +378,7 @@ final class DownloadStore: ObservableObject {
     private func rebuild() {
         let videos = videoJobs.map(Self.item(from:))
         var all = pending + engineItems.filter { e in !cloudJobs.contains { "\($0.engineID ?? "")" == e.id } }
-            + videos + thunderJobs.map(Self.item(from:)) + cloudJobs.map(Self.item(from:))
+            + videos + thunderJobs.map(Self.item(from:)) + cloudJobs.filter { $0.pulling == nil }.map(Self.item(from:))
         all.sort { $0.createdAt > $1.createdAt }
         for k in all.indices {
             all[k].avgSpeed = Int64(smoothSpeed[all[k].id] ?? 0)
@@ -712,7 +713,16 @@ final class DownloadStore: ObservableObject {
         Task {
             defer { cloudPolling = false }
             while !cloudJobs.isEmpty {
-                for job in cloudJobs where !job.taskID.isEmpty {
+                // 拉回完成的：删云端文件、结束这个云盘任务
+                for job in cloudJobs where job.pulling != nil {
+                    let ids = job.pulling ?? []
+                    let finished = ids.allSatisfy { id in engineItems.first { $0.id == id }.map { !$0.isActive } ?? true }
+                    if finished {
+                        if !job.fileID.isEmpty { await PikPak.shared.deleteForever(job.fileID) }
+                        cloudJobs.removeAll { $0.id == job.id }
+                    }
+                }
+                for job in cloudJobs where !job.taskID.isEmpty && job.pulling == nil {
                     guard let t = try? await PikPak.shared.status(job.taskID, fileID: job.fileID) else { continue }
                     if t.phase == "PHASE_TYPE_ERROR" { cloudFailed(job.id, t.message ?? "云端下载出错"); continue }
                     if let k = cloudJobs.firstIndex(where: { $0.id == job.id }) { cloudJobs[k].progress = t.progress }
@@ -724,11 +734,17 @@ final class DownloadStore: ObservableObject {
                         if let p = job.partial, FileManager.default.fileExists(atPath: p) {
                             try? FileManager.default.trashItem(at: URL(fileURLWithPath: p), resultingItemURL: nil)
                         }
+                        var created: [String] = []
                         for f in files {
                             let id = try await host.client.create(url: f.url, directory: job.dir, name: f.name)
+                            created.append(id)
                             if f.size == files.map(\.size).max() { selectedID = id }
                         }
-                        cloudJobs.removeAll { $0.id == job.id }; saveCloud()
+                        if let k = cloudJobs.firstIndex(where: { $0.id == job.id }) {
+                            cloudJobs[k].pulling = created
+                            if !t.fileID.isEmpty { cloudJobs[k].fileID = t.fileID }
+                        }
+                        saveCloud()
                         notice = "「\(job.title)」云端已下好，正在从云盘拉回"
                         await poll()
                     } catch { cloudFailed(job.id, error.localizedDescription) }

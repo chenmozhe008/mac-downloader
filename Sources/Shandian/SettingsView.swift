@@ -47,11 +47,8 @@ struct SettingsView: View {
     @AppStorage(Prefs.downloadLimitKey) private var limit = 0
     @AppStorage(Prefs.autoThunderKey) private var autoThunder = false
     @AppStorage(Prefs.autoCloudKey) private var autoCloud = true
-    @State private var pkUser = ""
-    @State private var pkPass = ""
     @State private var pkState = PikPak.loggedInUser
-    @State private var pkBusy = false
-    @State private var pkError = ""
+    @State private var showPKLogin = false
     @AppStorage(ClipboardWatcher.enabledKey) private var watchClipboard = true
     @AppStorage(NewTaskPanels.askKey) private var confirmNew = true
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
@@ -94,21 +91,11 @@ struct SettingsView: View {
                     Toggle("磁力、种子太慢时自动交给云盘离线", isOn: $autoCloud)
                         .help("BT 网络里几乎没人传的资源，交给 PikPak 服务器下好，再从云盘满速拉回")
                 } else {
-                    TextField("邮箱或手机号", text: $pkUser)
-                    SecureField("密码", text: $pkPass)
-                    HStack {
-                        Button(pkBusy ? "正在登录…" : "登录") {
-                            pkBusy = true; pkError = ""
-                            Task {
-                                do { try await PikPak.shared.login(username: pkUser, password: pkPass); pkState = PikPak.loggedInUser; pkPass = "" }
-                                catch { pkError = error.localizedDescription }
-                                pkBusy = false
-                            }
-                        }
-                        .disabled(pkUser.isEmpty || pkPass.isEmpty || pkBusy)
-                        if !pkError.isEmpty { Text(pkError).foregroundStyle(Theme.failed).font(.system(size: 12)) }
+                    LabeledContent("PikPak 账号") {
+                        Button("用浏览器登录…") { showPKLogin = true }
                     }
-                    Text("没有账号先去 mypikpak.com 免费注册（需开代理）。密码只用来登录，不保存。").font(.system(size: 12)).foregroundStyle(Theme.sub)
+                    Text("在弹出的 PikPak 官方网页里登录，密码不经过闪电下载。没有账号先在网页里免费注册（需开代理）。")
+                        .font(.system(size: 12)).foregroundStyle(Theme.sub)
                 }
             }
 
@@ -124,6 +111,12 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+        .sheet(isPresented: $showPKLogin) {
+            PikPakLoginView { name in
+                showPKLogin = false
+                if name != nil { pkState = PikPak.loggedInUser }
+            }
+        }
         .frame(width: 520)
         .fixedSize(horizontal: false, vertical: true)
         .tint(Theme.tint)

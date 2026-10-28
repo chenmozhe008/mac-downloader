@@ -24,7 +24,7 @@
 - `127.0.0.1:9999` 内核 REST；`127.0.0.1:6800` App 内置网关（`Gateway.swift`）：`/jsonrpc` 兼容 Aria2 RPC（LinkSwift 推网盘直链），`/api/v1/*` 代理 Gopeed 浏览器扩展（新建任务改走 App 的添加流程：存哪、只选正片、片名整理），密钥都是内核 token
 - `shandian://add?url=<编码后的链接>`（可多个 url）：脚本 / skill 交链接给 App，`open -g` 不抢焦点。**测试别再用 System Events 模拟 ⌘V**（窗口没抢到焦点时按键会落到用户正在用的程序里，10-27 踩过）
 - 迅雷通道（`ThunderBridge.swift`，10-28）：BT 慢 3 分钟自动交给本机迅雷——设迅雷 LastSavePath、用迅雷打开链接、辅助功能 API 点「立即下载」；进度靠迅雷任务文件夹里非隐藏文件的实际占用量，文件夹按 `.<INFOHASH>.js`（迅雷的进度文件）认，`.js` 都没了算下完。**不逆向迅雷协议、不碰会员**（用户多次要求 rev 迅雷，已拒绝：等于白用别人的商业服务）
-- 云盘离线（`PikPak.swift`，10-28 用户不想靠迅雷）：接口照开源 PikPakAPI（登录 captcha_init → signin；离线 POST /drive/v1/files UPLOAD_TYPE_URL；进度 /drive/v1/tasks；下载地址要 captcha 的 GET /drive/v1/files/{id} → web_content_link）。只存令牌 `pikpak.json`（600），不存密码；账号用户自己注册。BT 慢 3 分钟优先云盘、其次（开了的话）迅雷。**待用户注册账号后实测**
+- 云盘离线（`PikPak.swift`，10-28 用户不想靠迅雷）：接口照开源 PikPakAPI（登录 captcha_init → signin；离线 POST /drive/v1/files UPLOAD_TYPE_URL；进度 /drive/v1/tasks；下载地址要 captcha 的 GET /drive/v1/files/{id} → web_content_link）。登录用 App 里的网页窗口打开 PikPak 官方登录页（用户 10-28：不要在 App 里输密码），读 localStorage 的 `credentials_<client_id>` 和 `deviceid` 后删掉网页那份，之后只由闪电下载刷新（网页端常量来自开源 peach ADR-0093 / AList，PikPak 改版可能失效）。只存令牌 `pikpak.json`（600）。拉回本地后删云端文件（免费 6 GB）。BT 慢 3 分钟优先云盘、其次（开了的话）迅雷。**待用户注册账号后实测**
 - 回收站：移除任务写 `removed.json`（最多 500 条），可重新下载
 - 磁力默认打开方式已改为闪电下载（10-27 用户同意）；`.torrent` 文件关联未改
 - 浏览器扩展：**用自带的**（`browser-extension/`，MV3，Chrome / Edge 通用；10-28 用户说别绑篡改猴）。打包进 App、启动时拷到 `Application Support/ShandianDownload/BrowserExtension`（浏览器记路径，别指向 dist）。用户在扩展页开开发者模式、拖文件夹进去装一次——浏览器不允许第三方静默装扩展，Chrome 137+ 也不认 `--load-extension`
