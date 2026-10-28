@@ -10,7 +10,7 @@
 - **内核**：Gopeed headless v1.9.3 **打了闪电下载补丁**（`engine/shandian-gopeed-v1.9.3.patch`，`script/build_engine.sh` 编译，产物打进 App、启动时换上），REST API `127.0.0.1:9999`，请求头 `X-Api-Token`；token 由 App 首次运行生成，存 `~/Library/Application Support/ShandianDownload/engine.json`（600 权限，不在仓库里），脚本也读这里
   - 内核程序和任务库在本机 `Application Support/ShandianDownload/engine/`（10-28 用户同意从移动硬盘挪来；硬盘上的旧副本 `/Volumes/Jack Feng/Applications/MacDownloader/` 没删，等用户定）
   - App 启动时没有就拉起；退出 App 只暂停任务、不关内核
-  - 补丁内容：①块完成记录落盘（bolt，`engine/data/piece-completion`）+ 关掉 .part 文件——anacrolix 用 .part 时启动会把没下完文件的块全标未完成，记录等于白存；②全局限速（config.extra.shandianDownloadLimit，KB/s，BT 和直链共用）；③`PUT /tasks/{id}/stream` 顺序下载、`GET /play/{id}/{key}/{名字}` 边下边送（key=sha256("shandian-play:"+token+":"+id) 前 24 位，播放器带不了请求头）；④新建任务前丢掉「解析」留下的同种子副本，否则文件写到默认目录
+  - 补丁内容：①块完成记录落盘（bolt，`engine/data/piece-completion`）+ 关掉 .part 文件——anacrolix 用 .part 时启动会把没下完文件的块全标未完成，记录等于白存；②全局限速（config.extra.shandianDownloadLimit，KB/s，BT 和直链共用）；③`PUT /tasks/{id}/stream` 顺序下载、`GET /play/{id}/{key}/{名字}` 边下边送（key=sha256("shandian-play:"+token+":"+id) 前 24 位，播放器带不了请求头）；④新建任务前丢掉「解析」留下的同种子副本，否则文件写到默认目录；⑤解析回 403 时带 `Range: bytes=0-` 重试（新片厂 xpccdn）；⑥429/5xx 指数退避（2→30 秒），连续 3 分钟没进展才放弃并报错（原版永不放弃、任务永远「下载中」）；⑦每段至少 20 MB（同 aria2 min-split-size），小文件 1 个连接；⑧`/resolve?probe=1` 只探测、立即关掉（原版解析会把 HTTP 文件整个预下载到 $TMPDIR 且不清，App 不用 rid 等于下两遍）；⑨任务字段 `shandianError` 存失败原因（App `EngineTask.failureText` 翻成人话）。补丁测试 `internal/protocol/http/shandian_test.go`
   - Go 工具链、Gopeed 源码、编译缓存都在移动硬盘 `Applications/ShandianBuild/`（不装全局）；**必须开 CGO**（不开 anacrolix 用纯 Go uTP，10-28 实测只剩 1 个连接）；本机命令行工具的链接器和 SDK 对不上，`build_engine.sh` 用移动硬盘上 Xcode-26.5 的工具链
   - 推出移动硬盘：DiskArbitration 推出审批回调里查内核是否开着那块盘上的文件（`EngineHost.holdsFiles`），开着就暂停→结束内核→批准→2 秒后重启，插回自动续
   - 只监听 127.0.0.1，不开 0.0.0.0
@@ -29,10 +29,11 @@
 - 磁力默认打开方式已改为闪电下载（10-27 用户同意）；`.torrent` 文件关联未改
 - 浏览器扩展：**用自带的**（`browser-extension/`，MV3，Chrome / Edge 通用；10-28 用户说别绑篡改猴）。打包进 App、启动时拷到 `Application Support/ShandianDownload/BrowserExtension`（浏览器记路径，别指向 dist）。用户在扩展页开开发者模式、拖文件夹进去装一次——浏览器不允许第三方静默装扩展，Chrome 137+ 也不认 `--load-extension`
   - 扩展 ID 由 manifest 的 `key` 固定为 `pggchniffhkcgigajlapkboikmgdipel`，网关 `/extension/*` 只认这个 Origin，不用密钥；改 key 要同步改 `Gateway.extensionOrigin`
-  - 接管规则：App 接下了才取消浏览器那边的下载；App 没开浏览器照常下。网盘直链（LinkSwift）仍需篡改猴，设置页里折叠为可选
+  - 接管规则：App 接下了才取消浏览器那边的下载；App 没开浏览器照常下（不拉起 App）。图片/文本/网页和已知 <5 MB 的不接（参照 IDM 默认不接图片）。接手后扩展每 5 秒问 `/extension/status` 共 5 分钟，App 那边失败就移除任务、扩展用浏览器重下（不再拦截）。用户主动点的（面板按钮、右键）App 没开就打开 `shandian://open`，等 ping 的 `ready`（内核就绪）再交。网盘直链（LinkSwift）仍需篡改猴，设置页里折叠为可选
 - 退出 App：`pauseAll` 后内核留着不关，下载中的任务记进 `resumeOnLaunch`，下次打开续上（补丁后内核重启也不用校验）
 - 复制即弹（`ClipboardWatcher`）：App 不在前台时，复制磁力/ed2k/种子/网盘/视频站/常见文件链接 → 右上角浮窗；普通网页不弹
-- 代理：启动时探测 Clash（`LocalProxy`），没开就全部直连；开着时只有境外 HTTP / 视频站任务走它，BT 不走
+- 代理：启动时读系统代理设置（`LocalProxy.check`，跟浏览器一致，不再写死 7897），没开或连不上就全部直连；开着时国内名单直连、其余 HTTP / 视频站走它（本机 Clash 是规则模式，漏在名单外的国内站也会被 Clash 直连），BT 不走
+- 下载完成：打 com.apple.quarantine（`markQuarantine`，同浏览器）、放提示音 `Resources/done.wav`（`script/make_done_sound.py` 合成的上行五度「叮—咚」，不用迅雷的）；系统通知本身静音免得响两次
 
 ## 版本与更新记录（沿用小清）
 
@@ -52,7 +53,7 @@
 | 项 | 值 | 依据 |
 |---|---|---|
 | 落盘 | 磁力/种子/ed2k → `/Volumes/Jack Feng/movies`；视频站和其余 → `~/Downloads`（10-28 用户定：视频网站不再单建「视频」） | 用户主要下电影；普通文件不混进电影目录 |
-| 代理 | 内核全局代理**关**；磁力/种子一律直连；HTTP 直链、视频站按域名判断（`LocalProxy.needed`）：国内站直连，其余单个任务走 `127.0.0.1:7897` | 10-28 实测全局开着时 BT 连接全绕 Clash、上传为 0、速度几 KB～4 MB/s 乱跳；用户定：电影一般在国内下，YouTube 这类境外站才走代理，别一刀切 |
+| 代理 | 内核全局代理**关**；磁力/种子一律直连；HTTP 直链、视频站按域名判断（`LocalProxy.needed`）：国内站直连，其余单个任务走系统代理（本机 `127.0.0.1:7897`） | 10-28 实测全局开着时 BT 连接全绕 Clash、上传为 0、速度几 KB～4 MB/s 乱跳；用户定：电影一般在国内下，YouTube 这类境外站才走代理，别一刀切 |
 | HTTP 连接数 | 8 | 清华/中科大/华为云镜像对 16 线程回 403/418（10-27 实测被封） |
 | BT 监听端口 | 6881 固定 | 默认随机端口不利于被连入 |
 | HTTP User-Agent | `ShandianDownload/<版本>`，不冒充浏览器（`EngineClient.userAgent`） | Go 的 TLS 握手配 Chrome UA 被中科大等镜像识别为伪装爬虫 403，Chrome 116/141 都拦，如实写工具名才放行（10-27 实测）；要浏览器身份的下载由插件带真实 UA/Cookie |
@@ -75,6 +76,7 @@
 - 上传：内核 `cfg.Seed = true`，上传没被关；《求救信号》上传一直 0 是对方不向我们要数据（迅雷用户为主），同时下的《希望》传了 49 MB。本机路由器 SSDP 发现不到 UPnP 网关（10-28），IPv4 下别人连不进来，要在路由器里开 UPnP；Mac 防火墙已放行 gopeed
 - 原版重启内核会整片重新校验（Gopeed 用 .part 文件 + anacrolix 块记录只在内存），已由内核补丁解决；App 里「正在校验」（`checkFloor`）显示逻辑保留，换内核那次用得上
 - 限速是补丁加的（原版没有）
+- 维基百科原图（upload.wikimedia.org）对代理机房 IP 按频率随机放行（10-28 实测同一请求隔 3 秒约一半 429），浏览器单请求多试一次就过；闪电下载靠补丁⑥⑦（单连接 + 退避）
 - `download-movie` skill 10-28 改成 `dl_shandian.sh` → `shandian://add?confirm=0&url=…`（不弹确认框）；闪电下载不可用时退回迅雷 `dl_fast.sh`
 
 ## 目录

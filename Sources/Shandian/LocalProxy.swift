@@ -1,20 +1,29 @@
 import Foundation
 
-/// 本机 Clash 代理（127.0.0.1:7897，规则模式：境外走代理、国内直连）。
-/// Clash 没开时不走代理，否则所有下载都会失败；启动时检测一次，下载前各处读 isUp。
+/// 代理跟浏览器一样读系统设置（10-28：原先写死 127.0.0.1:7897，系统代理关了或换了端口就和浏览器不一致）。
+/// 系统代理没开、或开了但连不上时不走代理，否则所有下载都会失败；启动时检测一次，下载前各处读 isUp。
+/// 本机是 Clash 规则模式（10-28 确认），经过它的国内站也会按 IP 直连，下面的国内名单只是少绕一道。
 ///
 /// 什么走代理（10-28 用户定：电影一般在国内下，别一刀切走代理）：
 /// - 磁力 / 种子：一律直连。内核的全局代理关掉——开着时 BT 连其他用户也绕 Clash，
 ///   10-28 实测《求救信号》全部连接走 7897、上传为 0，速度在几 KB 到 4 MB/s 间乱跳
 /// - HTTP 直链、视频网站：按域名判断，国内站直连，其余（YouTube、X、GitHub 等）单个任务走代理
 enum LocalProxy {
-    static let host = "127.0.0.1"
-    static let port = 7897
+    nonisolated(unsafe) static var host = "127.0.0.1"
+    nonisolated(unsafe) static var port = 7897
     static var url: String { "http://\(host):\(port)" }
     nonisolated(unsafe) static var isUp = true
 
-    /// 能连上端口、拿到任何 HTTP 回应就算在运行
+    /// 读系统代理（优先 HTTPS 那一项），能连上、拿到任何 HTTP 回应就算可用
     static func check() async {
+        let sys = CFNetworkCopySystemProxySettings()?.takeRetainedValue() as? [String: Any] ?? [:]
+        let pick: (String) -> (String, Int)? = { p in
+            guard (sys[p + "Enable"] as? Int) == 1, let h = sys[p + "Proxy"] as? String, !h.isEmpty,
+                  let port = sys[p + "Port"] as? Int else { return nil }
+            return (h, port)
+        }
+        guard let (h, p) = pick("HTTPS") ?? pick("HTTP") else { isUp = false; return }
+        host = h; port = p
         var req = URLRequest(url: URL(string: url)!)
         req.timeoutInterval = 1.5
         let cfg = URLSessionConfiguration.ephemeral

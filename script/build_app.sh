@@ -25,6 +25,7 @@ rm -rf "$APP"; mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/$EXECUTABLE_NAME"
 cp "$ICNS" "$APP/Contents/Resources/AppIcon.icns"
 cp "$ROOT/CHANGELOG.md" "$APP/Contents/Resources/CHANGELOG.md"  # 「关于 → 更新记录」直接读它
+cp "$ROOT/Resources/done.wav" "$APP/Contents/Resources/done.wav"  # 下载完成提示音（script/make_done_sound.py 生成）
 cp -R "$ROOT/browser-extension" "$APP/Contents/Resources/BrowserExtension"  # 启动时拷到 Application Support（浏览器认固定路径）
 # 打过补丁的内核（script/build_engine.sh 编出来的）；App 启动时发现和本机装的不一样就换上
 ENGINE_BIN="/Volumes/Jack Feng/Applications/ShandianBuild/gopeed-shandian"

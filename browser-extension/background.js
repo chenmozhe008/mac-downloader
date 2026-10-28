@@ -3,6 +3,7 @@
 
 const APP = "http://127.0.0.1:6800/extension/add";
 const PING = "http://127.0.0.1:6800/extension/ping";
+const STATUS = "http://127.0.0.1:6800/extension/status";
 
 // 告诉 App 扩展已装好（设置页显示「已连接」）；App 带的扩展版本比现在的新就自己重新加载
 // （已解压的扩展浏览器不会自动刷新，App 更新时已把新文件写进扩展文件夹）
@@ -142,13 +143,48 @@ async function sendToApp(url, referrer, name, tabId) {
   }
 }
 
+// 图片、网页、文本和已知很小的文件留给浏览器：多连接快不了，交出去反而多一个出错环节（参照 IDM 默认不接图片）
+const SMALL = 5 * 1024 * 1024;
+function worthTakingOver(item) {
+  const mime = (item.mime || "").toLowerCase();
+  if (/^(image|text)\//.test(mime) || mime === "application/xhtml+xml") return false;
+  const size = item.totalBytes > 0 ? item.totalBytes : item.fileSize;
+  return !(size > 0 && size < SMALL);
+}
+
+// 失败后交回浏览器重下的链接：浏览器再建下载时不再拦
+const handedBack = new Set();
+
+// 交给 App 后盯 5 分钟：App 那边失败了（会自己移除任务）就用浏览器重新下，不让这次下载丢掉
+async function watchHandOver(url) {
+  for (let i = 0; i < 60; i++) {
+    await new Promise((r) => setTimeout(r, 5000));
+    await chrome.runtime.getPlatformInfo(); // 调一次扩展接口，后台脚本不会因空闲 30 秒被回收
+    let state;
+    try {
+      const r = await fetch(STATUS, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url }) });
+      state = (await r.json()).state;
+    } catch (_) {
+      return; // App 关了：不再管
+    }
+    if (state === "failed") {
+      handedBack.add(url);
+      chrome.downloads.download({ url });
+      return;
+    }
+    if (state === "done" || state === "none") return;
+  }
+}
+
 chrome.downloads.onCreated.addListener(async (item) => {
   const url = item.finalUrl || item.url;
-  if (!/^https?:/i.test(url) || !(await enabled())) return;
+  if (handedBack.delete(url) || handedBack.delete(item.url)) return;
+  if (!/^https?:/i.test(url) || !worthTakingOver(item) || !(await enabled())) return;
   if (await sendToApp(url, item.referrer)) {
     // App 接下了才取消浏览器这边的，避免两边都没下
     try { await chrome.downloads.cancel(item.id); } catch (_) {}
     try { await chrome.downloads.erase({ id: item.id }); } catch (_) {}
+    watchHandOver(url);
   }
 });
 

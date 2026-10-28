@@ -49,6 +49,29 @@ struct EngineTask: Decodable {
     var progress: Progress
     var createdAt: String?
     var updatedAt: String?
+    var shandianError: String?   // 内核补丁：最近一次失败的原因
+
+    /// 失败原因翻译成人话（内核原话如 http request fail, code:429 / connection 2 failed: retries=3, status=403）
+    var failureText: String {
+        let e = (shandianError ?? "").lowercased()
+        let code = e.range(of: #"(code:|status=)\s*([0-9]{3})"#, options: .regularExpression)
+            .flatMap { Int(e[$0].filter(\.isNumber)) }
+        switch code {
+        case 429?: return "服务器限制了下载频率，过一会儿再试"
+        case 401?: return "需要登录才能下载"
+        case 403?: return "服务器拒绝下载（链接可能已过期，或需要登录）"
+        case 404?, 410?: return "文件不存在或链接已失效"
+        case let c? where c >= 500: return "服务器出错（\(c)），过一会儿再试"
+        case let c?: return "服务器返回错误（\(c)）"
+        case nil: break
+        }
+        if e.contains("no space left") { return "磁盘空间不足" }
+        if e.contains("no such host") { return "找不到服务器（网址有误或网络不通）" }
+        if e.contains("timeout") || e.contains("deadline exceeded") { return "连接服务器超时" }
+        if e.contains("connection refused") || e.contains("connection reset") || e.contains("eof") { return "和服务器的连接断开了" }
+        if e.contains("permission denied") || e.contains("operation not permitted") { return "没有权限写入保存位置" }
+        return "下载出错"
+    }
 }
 
 struct ResolvedResource {
@@ -101,10 +124,16 @@ final class EngineClient: @unchecked Sendable {
 
     func tasks() async throws -> [EngineTask] { try await call("GET", "tasks") ?? [] }
 
-    /// 解析链接拿文件列表（磁力要先从网络拿到种子信息，可能要等一会）
-    func resolve(url: String) async throws -> ResolvedResource {
+    /// 解析链接拿文件列表（磁力要先从网络拿到种子信息，可能要等一会）。
+    /// 直链带上和真正下载时一样的代理、浏览器请求头，否则要登录 / 防盗链 / 境外的链接在这一步就失败；
+    /// 直链用 probe=1（内核补丁）：只要名字和大小，不在后台把整个文件预下载一遍
+    func resolve(url: String, headers: [String: String] = [:]) async throws -> ResolvedResource {
         struct R: Decodable { struct Res: Decodable { var name: String?; var files: [EngineTask.Meta.File]? }; var res: Res }
-        guard let r: R = try await call("POST", "resolve", body: ["req": ["url": url]], timeout: 300) else {
+        var req: [String: Any] = ["url": url]
+        let http = url.lowercased().hasPrefix("http")
+        if http { req["proxy"] = LocalProxy.engineRequest(for: url) }
+        if !headers.isEmpty { req["extra"] = ["header": headers] }
+        guard let r: R = try await call("POST", http ? "resolve?probe=1" : "resolve", body: ["req": req], timeout: 300) else {
             throw EngineError.server("解析失败")
         }
         return ResolvedResource(name: r.res.name ?? "", files: r.res.files ?? [])

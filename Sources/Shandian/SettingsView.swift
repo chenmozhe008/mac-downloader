@@ -18,6 +18,8 @@ enum Prefs {
     static var maxRunning: Int { let v = UserDefaults.standard.integer(forKey: maxRunningKey); return v > 0 ? v : 5 }
     static var preventSleep: Bool { UserDefaults.standard.object(forKey: preventSleepKey) as? Bool ?? true }
     static var notify: Bool { UserDefaults.standard.object(forKey: notifyKey) as? Bool ?? true }
+    static let doneSoundKey = "doneSound"
+    static var doneSound: Bool { UserDefaults.standard.object(forKey: doneSoundKey) as? Bool ?? true }
 }
 
 /// 有任务在下时不让 Mac 因闲置睡眠（合盖、手动睡眠照常）；没在下就放开
@@ -44,6 +46,7 @@ struct SettingsView: View {
     @AppStorage(Prefs.maxRunningKey) private var maxRunning = 5
     @AppStorage(Prefs.preventSleepKey) private var preventSleep = true
     @AppStorage(Prefs.notifyKey) private var notify = true
+    @AppStorage(Prefs.doneSoundKey) private var doneSound = true
     @AppStorage(Prefs.downloadLimitKey) private var limit = 0
     @AppStorage(Prefs.autoThunderKey) private var autoThunder = false
     @AppStorage(Prefs.autoCloudKey) private var autoCloud = false
@@ -115,6 +118,7 @@ struct SettingsView: View {
                 Toggle("下载时不让 Mac 进入睡眠", isOn: $preventSleep)
                     .help("只阻止闲置睡眠；合上盖子或手动睡眠照常")
                 Toggle("下载完成时通知", isOn: $notify)
+                Toggle("下载完成时播放提示音", isOn: $doneSound)
                 Toggle("登录时自动打开闪电下载", isOn: $launchAtLogin)
                     .onChange(of: launchAtLogin) { _, on in
                         do { if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() } }

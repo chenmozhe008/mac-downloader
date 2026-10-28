@@ -171,7 +171,7 @@ index d9202dd..d23b19e 100644
  	if err != nil {
  		return
 diff --git a/internal/protocol/http/fetcher.go b/internal/protocol/http/fetcher.go
-index a9ed14a..bb923b0 100644
+index a9ed14a..87c251f 100644
 --- a/internal/protocol/http/fetcher.go
 +++ b/internal/protocol/http/fetcher.go
 @@ -351,6 +351,20 @@ func (f *Fetcher) Resolve(req *base.Request, opts *base.Options) error {
@@ -211,6 +211,186 @@ index a9ed14a..bb923b0 100644
  	// Parse last modified time
  	var lastModifiedTime *time.Time
  	lastModified := resp.Header.Get(base.HttpHeaderLastModified)
+@@ -673,6 +696,13 @@ func (f *Fetcher) doStart() error {
+ 
+ 	// Initialize slow start controller
+ 	maxConns := f.meta.Opts.Extra.(*fhttp.OptsExtra).Connections
++	// shandian: 每段至少 20 MB（同 aria2 的 min-split-size）：小文件只用 1 个连接。
++	// 一张几 MB 的图开 8 个连接，限流的服务器（如维基）直接 429，分段也快不了多少
++	if size := f.meta.Res.Size; size > 0 {
++		if byChunk := int(size / shandianMinSplit); byChunk < maxConns {
++			maxConns = max(byChunk, 1)
++		}
++	}
+ 	f.slowStart = newSlowStartController(maxConns)
+ 
+ 	// Create main context
+@@ -889,6 +919,12 @@ func (f *Fetcher) expandConnections() {
+ 	}
+ }
+ 
++// shandian: 每个连接至少分到这么多（小于 2 倍的文件不分段）
++const shandianMinSplit = 20 << 20
++
++// shandian: 429/5xx 连续这么久一个字节没拿到就放弃这个连接（变量方便测试改小）
++var shandianExemptGiveUp = 3 * time.Minute
++
+ func (f *Fetcher) runConnection(conn *connection) {
+ 	defer f.wg.Done()
+ 
+@@ -902,8 +938,13 @@ func (f *Fetcher) runConnection(conn *connection) {
+ 
+ 	retries := 0
+ 	conn.retryTimes = 0
++	// shandian: 429/5xx 原版不计失败、每 5 秒重试且永不放弃，调度循环又在等这批连接有结果，任务就永远「下载中」。
++	// 改成指数退避（2→4→…→30 秒），连续 3 分钟一个字节没拿到才放弃（计为失败，任务正常报错）
++	var exemptSince time.Time
++	exemptTries := 0
+ 
+ 	for {
++		downloadedBefore := conn.Downloaded
+ 		// Rebuild client with updated fast-fail timeout on retries
+ 		if retries > 0 {
+ 			client = f.buildFastFailClient()
+@@ -935,6 +976,45 @@ func (f *Fetcher) runConnection(conn *connection) {
+ 			conn.lastErr = err
+ 		}
+ 
++		if conn.Downloaded > downloadedBefore {
++			exemptSince, exemptTries = time.Time{}, 0
++		}
++		if re := extractRequestError(err); re != nil && isFailureExemptHTTPCode(re.Code) {
++			if re.Code == 429 && f.slowStart != nil {
++				f.slowStart.mu.Lock()
++				f.slowStart.paused = true // 服务器嫌请求多，不再加开连接
++				f.slowStart.mu.Unlock()
++			}
++			if exemptSince.IsZero() {
++				exemptSince = time.Now()
++			}
++			if time.Since(exemptSince) > shandianExemptGiveUp {
++				f.connMu.Lock()
++				conn.State = connFailed
++				conn.failed = true
++				conn.retryTimes = 3
++				f.connMu.Unlock()
++				if f.slowStart != nil {
++					f.slowStart.onConnectFailed()
++				}
++				return
++			}
++			f.connMu.Lock()
++			conn.State = connFailed
++			f.connMu.Unlock()
++			delay := time.Duration(1<<min(exemptTries+1, 5)) * time.Second // 2,4,8,16,30 秒
++			if delay > 30*time.Second {
++				delay = 30 * time.Second
++			}
++			exemptTries++
++			select {
++			case <-conn.ctx.Done():
++				return
++			case <-time.After(delay):
++			}
++			continue
++		}
++
+ 		if shouldCountHTTPFailure(err) {
+ 			if re := extractRequestError(err); re != nil && re.Code == 403 {
+ 				f.connMu.Lock()
+diff --git a/internal/protocol/http/shandian_test.go b/internal/protocol/http/shandian_test.go
+new file mode 100644
+index 0000000..d769291
+--- /dev/null
++++ b/internal/protocol/http/shandian_test.go
+@@ -0,0 +1,87 @@
++package http
++
++import (
++	"net"
++	"net/http"
++	"strings"
++	"sync/atomic"
++	"testing"
++	"time"
++
++	"github.com/GopeedLab/gopeed/internal/test"
++)
++
++// 闪电下载补丁的测试
++
++// 新片厂 xpccdn：不带 Range 回 403，带 Range 才 206
++func TestShandian_Range403(t *testing.T) {
++	fs := test.StartTestFileServer() // 生成测试文件；Close 时会删掉它
++	defer fs.Close()
++	ln, _ := net.Listen("tcp", "127.0.0.1:0")
++	go http.Serve(ln, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		if !strings.HasPrefix(r.Header.Get("Range"), "bytes=") {
++			w.WriteHeader(403)
++			return
++		}
++		http.ServeFile(w, r, test.BuildFile)
++	}))
++	defer ln.Close()
++	downloadNormal(ln, 4, t)
++}
++
++// 下载中途服务器一直回 429：不能永远「下载中」，要在放弃时限后报错
++func TestShandian_Persistent429Fails(t *testing.T) {
++	old := shandianExemptGiveUp
++	shandianExemptGiveUp = 5 * time.Second
++	defer func() { shandianExemptGiveUp = old }()
++	fs := test.StartTestFileServer()
++	defer fs.Close()
++	var n atomic.Int32
++	ln, _ := net.Listen("tcp", "127.0.0.1:0")
++	go http.Serve(ln, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		if n.Add(1) > 1 { // 只有解析那一下正常，之后一律 429
++			w.WriteHeader(429)
++			return
++		}
++		http.ServeFile(w, r, test.BuildFile)
++	}))
++	defer ln.Close()
++	f := downloadReady(ln, 4, t)
++	// 解析的响应体也会被用来下载，掐掉它模拟中途断开
++	f.(*Fetcher).resolveRespLock.Lock()
++	if f.(*Fetcher).resolveResp != nil {
++		f.(*Fetcher).resolveResp.Body.Close()
++	}
++	f.(*Fetcher).resolveRespLock.Unlock()
++	if err := f.Start(); err != nil {
++		t.Fatal(err)
++	}
++	done := make(chan error, 1)
++	go func() { done <- f.Wait() }()
++	select {
++	case err := <-done:
++		if err == nil {
++			t.Fatal("一直 429 却报告完成")
++		}
++	case <-time.After(60 * time.Second):
++		t.Fatal("一直 429 时任务卡住不报错")
++	}
++}
++
++// 偶尔 429（像维基限流，约一半请求被拒）：退避重试后应能下完
++func TestShandian_Intermittent429Completes(t *testing.T) {
++	fs := test.StartTestFileServer()
++	defer fs.Close()
++	var n atomic.Int32
++	ln, _ := net.Listen("tcp", "127.0.0.1:0")
++	go http.Serve(ln, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		if n.Add(1)%2 == 0 {
++			w.WriteHeader(429)
++			return
++		}
++		http.ServeFile(w, r, test.BuildFile)
++	}))
++	defer ln.Close()
++	downloadNormal(ln, 8, t)
++}
++
 diff --git a/internal/protocol/http/timeout_reader.go b/internal/protocol/http/timeout_reader.go
 index f23e16e..31cac86 100644
 --- a/internal/protocol/http/timeout_reader.go
@@ -317,7 +497,7 @@ index 0000000..496faca
 +	return hex.EncodeToString(sum[:])[:24]
 +}
 diff --git a/pkg/download/downloader.go b/pkg/download/downloader.go
-index 382a5b7..adef3cc 100644
+index 382a5b7..4f3f041 100644
 --- a/pkg/download/downloader.go
 +++ b/pkg/download/downloader.go
 @@ -1,6 +1,9 @@
@@ -338,7 +518,25 @@ index 382a5b7..adef3cc 100644
  	} else {
  		d.cfg.DownloaderStoreConfig = &base.DownloaderStoreConfig{
  			FirstLoad: true,
-@@ -873,6 +877,35 @@ func (d *Downloader) emit(eventKey EventKey, task *Task, errs ...error) {
+@@ -480,6 +484,17 @@ func (d *Downloader) CreateDirectBatch(req *base.CreateTaskBatch) (taskId []stri
+ 	return taskIds, nil
+ }
+ 
++// DropResolve shandian: 丢掉一次解析的结果（关连接、停预下载、删临时文件）
++func (d *Downloader) DropResolve(rrId string) {
++	d.fetcherMapLock.Lock()
++	f, ok := d.fetcherCache[rrId]
++	delete(d.fetcherCache, rrId)
++	d.fetcherMapLock.Unlock()
++	if ok {
++		go f.Close()
++	}
++}
++
+ func (d *Downloader) Create(rrId string) (taskId string, err error) {
+ 	d.fetcherMapLock.RLock()
+ 	fetcher, ok := d.fetcherCache[rrId]
+@@ -873,6 +888,35 @@ func (d *Downloader) emit(eventKey EventKey, task *Task, errs ...error) {
  	}
  }
  
@@ -374,7 +572,7 @@ index 382a5b7..adef3cc 100644
  func (d *Downloader) GetTask(id string) *Task {
  	d.lock.Lock()
  	defer d.lock.Unlock()
-@@ -951,6 +984,7 @@ func (d *Downloader) GetConfig() (*base.DownloaderStoreConfig, error) {
+@@ -951,6 +995,7 @@ func (d *Downloader) GetConfig() (*base.DownloaderStoreConfig, error) {
  
  func (d *Downloader) PutConfig(v *base.DownloaderStoreConfig) error {
  	d.cfg.DownloaderStoreConfig = v
@@ -382,8 +580,31 @@ index 382a5b7..adef3cc 100644
  	return d.storage.Put(bucketConfig, "config", v)
  }
  
+@@ -1092,6 +1137,9 @@ func (d *Downloader) watch(task *Task) {
+ 
+ func (d *Downloader) doOnError(task *Task, err error) {
+ 	d.Logger.Warn().Err(err).Msgf("task download failed, task id: %s", task.ID)
++	if err != nil {
++		task.ShandianError = err.Error()
++	}
+ 	task.updateStatus(base.DownloadStatusError)
+ 	d.triggerOnError(task, err)
+ 	if task.Status == base.DownloadStatusError {
+diff --git a/pkg/download/model.go b/pkg/download/model.go
+index bbb57ad..ba7782c 100644
+--- a/pkg/download/model.go
++++ b/pkg/download/model.go
+@@ -30,6 +30,8 @@ type Task struct {
+ 	IsCreated bool                 `json:"isCreated"`
+ 	CreatedAt time.Time            `json:"createdAt"`
+ 	UpdatedAt time.Time            `json:"updatedAt"`
++	// shandian: 最近一次失败的原因（原版只写日志），闪电下载据此给出提示
++	ShandianError string `json:"shandianError,omitempty"`
+ 
+ 	fetcherManager fetcher.FetcherManager
+ 	fetcher        fetcher.Fetcher
 diff --git a/pkg/rest/api.go b/pkg/rest/api.go
-index 6c72bfb..3797901 100644
+index 6c72bfb..9e6a016 100644
 --- a/pkg/rest/api.go
 +++ b/pkg/rest/api.go
 @@ -9,6 +9,7 @@ import (
@@ -394,7 +615,19 @@ index 6c72bfb..3797901 100644
  	"github.com/gorilla/mux"
  )
  
-@@ -110,6 +111,35 @@ func PauseTask(w http.ResponseWriter, r *http.Request) {
+@@ -31,6 +32,11 @@ func Resolve(w http.ResponseWriter, r *http.Request) {
+ 			WriteJson(w, model.NewErrorResult(err.Error()))
+ 			return
+ 		}
++		// shandian: ?probe=1 只要名字和大小（新建任务确认框）。原版解析会把 HTTP 文件在后台整个预下载到临时目录、
++		// 结果一直留在缓存里等 rid；闪电下载新建任务不用 rid，等于每个文件下两遍。探测完立刻关掉
++		if r.URL.Query().Get("probe") == "1" {
++			Downloader.DropResolve(rr.ID)
++		}
+ 		WriteJson(w, model.NewOkResult(rr))
+ 	}
+ }
+@@ -110,6 +116,35 @@ func PauseTask(w http.ResponseWriter, r *http.Request) {
  	WriteJson(w, model.NewNilResult())
  }
  

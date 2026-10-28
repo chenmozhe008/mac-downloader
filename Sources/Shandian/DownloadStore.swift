@@ -546,7 +546,7 @@ final class DownloadStore: ObservableObject {
                 url = "data:application/x-bittorrent;base64," + data.base64EncodedString()
             } else { url = Self.torrentDataURL(link) ?? link }
         }
-        return try? await host.client.resolve(url: url)
+        return try? await host.client.resolve(url: url, headers: kind == .torrentFile ? [:] : headers)
     }
 
     /// 真正开始下载。dir / selectFiles 来自确认框；不给就按默认规则（按类型存、种子只选正片）
@@ -639,6 +639,21 @@ final class DownloadStore: ObservableObject {
         Task {
             if allPaused { try? await host.client.resumeAll() } else { try? await host.client.pauseAll() }
             await poll()
+        }
+    }
+
+    /// 浏览器扩展问交过来的下载怎么样了：失败就移除（残缺文件进废纸篓），扩展会交回浏览器重新下载。
+    /// 返回 failed / running / done / waiting / none（不在列表里，比如确认框里取消了）
+    func handBackIfFailed(link: String) -> String {
+        guard let item = items.first(where: { $0.linkKey == Self.linkKey(link) }) else { return "none" }
+        switch item.status {
+        case .failed:
+            remove(item, moveFiles: true)
+            notice = "「\(item.title)」没下成，已交回浏览器下载"
+            return "failed"
+        case .done: return "done"
+        case .running, .resolving: return "running"
+        case .waiting, .paused: return "waiting"
         }
     }
 
@@ -898,6 +913,8 @@ final class DownloadStore: ObservableObject {
     }
 
     private func didFinish(_ item: Item) {
+        if let f = item.location ?? item.file { Self.markQuarantine(f, source: item.link) }
+        if Prefs.doneSound { Self.playDoneSound() }
         guard Prefs.notify else { return }
         let center = UNUserNotificationCenter.current()
         center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
@@ -905,10 +922,41 @@ final class DownloadStore: ObservableObject {
             let c = UNMutableNotificationContent()
             c.title = "下载完成"
             c.body = item.title
-            c.sound = .default
+            c.sound = nil   // 提示音由 App 自己放（不受通知权限影响），这里再响就重了
             c.categoryIdentifier = Self.doneCategory
             if let f = item.file { c.userInfo = ["path": f.path] }
             center.add(UNNotificationRequest(identifier: item.id, content: c, trigger: nil))
+        }
+    }
+
+    /// 下载完成提示音「叮—咚」（Resources/done.wav）；同一秒内多个任务完成只响一次
+    private static var lastSound = Date.distantPast
+    private static let doneSound = Bundle.main.url(forResource: "done", withExtension: "wav").flatMap { NSSound(contentsOf: $0, byReference: true) }
+    static func playDoneSound() {
+        guard Date().timeIntervalSince(lastSound) > 1, let s = doneSound else { return }
+        lastSound = Date()
+        s.stop(); s.play()
+    }
+
+    /// 跟浏览器一样给下载的文件打上「来自互联网」标记（com.apple.quarantine），下来的 App / 安装包打开时照常经过系统安全检查。
+    /// 文件夹（BT）里逐个标，.app 只标包本身
+    static func markQuarantine(_ url: URL, source: String) {
+        var props: [String: Any] = [kLSQuarantineAgentNameKey as String: "闪电下载",
+                                    kLSQuarantineTypeKey as String: kLSQuarantineTypeWebDownload as String]
+        if source.lowercased().hasPrefix("http"), let u = URL(string: source) { props[kLSQuarantineDataURLKey as String] = u }
+        func mark(_ f: URL) {
+            var f = f
+            var v = URLResourceValues(); v.quarantineProperties = props
+            try? f.setResourceValues(v)
+        }
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) else { return }
+        mark(url)
+        guard isDir.boolValue, url.pathExtension != "app",
+              let e = FileManager.default.enumerator(at: url, includingPropertiesForKeys: nil) else { return }
+        for case let f as URL in e {
+            if f.pathExtension == "app" { e.skipDescendants() }
+            mark(f)
         }
     }
 
@@ -981,12 +1029,13 @@ final class DownloadStore: ObservableObject {
         case "running": .running
         case "pause": .paused
         case "done": .done
-        case "error": .failed("下载出错")
+        case "error": .failed(t.failureText)
         default: .waiting
         }
         let created = ISO8601DateFormatter.flexible.date(from: t.createdAt ?? "") ?? .distantPast
         let rawTitle = t.name?.isEmpty == false ? t.name! : resName.isEmpty ? displayName(url) : resName
-        var it = Item(id: t.id, source: .engine(t.id), title: PrettyTitle.clean(rawTitle), rawTitle: rawTitle,
+        // 片名整理只给电影；普通文件保留原文件名（整理会把 . _ 换成空格、去掉后缀）
+        var it = Item(id: t.id, source: .engine(t.id), title: category == .movie ? PrettyTitle.clean(rawTitle) : rawTitle, rawTitle: rawTitle,
                     origin: origin, category: category, status: status, downloaded: min(t.progress.downloaded, max(total, t.progress.downloaded)),
                     total: total, speed: status == .running ? t.progress.speed : 0, file: main, createdAt: created, thumbRemote: nil,
                     linkKey: linkKey(lower.hasPrefix("magnet:") || t.meta.res?.hash == nil ? url : "btih:" + (t.meta.res?.hash ?? "")),

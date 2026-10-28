@@ -70,7 +70,9 @@ final class NewTaskModel: ObservableObject {
         kind = LinkKind.of(links[0])
         defaultDir = kind.map(Folders.directory(for:)) ?? Folders.downloads
         dir = defaultDir
-        title = links.count > 1 ? "" : (name ?? PrettyTitle.clean(DownloadStore.displayName(links[0])))
+        // 片名整理只给磁力/种子；普通文件用原文件名——这里的名字会直接当文件名交给内核，整理过会丢掉后缀
+        let raw = DownloadStore.displayName(links[0])
+        title = links.count > 1 ? "" : (name ?? (kind == .magnet || kind == .torrentFile ? PrettyTitle.clean(raw) : raw))
         if links.count == 1, kind != .videoSite { Task { await resolve() } }
     }
 
