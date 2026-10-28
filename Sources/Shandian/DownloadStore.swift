@@ -657,7 +657,7 @@ final class DownloadStore: ObservableObject {
         default: return
         }
         var job = ThunderJob(id: "thunder-" + UUID().uuidString, title: item.title, link: item.link, dir: dir,
-                             hash: ThunderBridge.infoHash(item.link), total: item.total, createdAt: Date())
+                             hash: ThunderBridge.infoHash(item.link), name: item.rawTitle, total: item.total, createdAt: Date())
         if let b = base, item.location != item.file { job.folder = nil; _ = b }
         thunderJobs.append(job); ThunderBridge.save(thunderJobs)
         selectedID = job.id

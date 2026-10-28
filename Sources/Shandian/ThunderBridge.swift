@@ -10,7 +10,8 @@ struct ThunderJob: Codable, Identifiable, Equatable {
     var link: String
     var dir: String              // 交给迅雷时的保存位置
     var folder: String?          // 迅雷建的任务文件夹（找到后记下）
-    var hash: String?            // 磁力的 infohash（大写），迅雷在文件夹里放 .<hash>.js 进度文件，靠它认
+    var hash: String?            // 磁力的 infohash（大写），迅雷有时在文件夹里放 .<hash>.js，靠它认
+    var name: String?            // 种子里的名字（迅雷建的文件夹通常就叫这个）
     var total: Int64
     var createdAt: Date
     var done = false
@@ -117,7 +118,19 @@ enum ThunderBridge {
                 let downloads = (try? fm.contentsOfDirectory(at: Folders.downloads, includingPropertiesForKeys: nil)) ?? []
                 let deeper = downloads.flatMap { (try? fm.contentsOfDirectory(at: $0, includingPropertiesForKeys: nil)) ?? [] }
                 job.folder = (kids + downloads + deeper).first { fm.fileExists(atPath: $0.appendingPathComponent(".\(h).js").path) }?.path
-            } else {
+            }
+            // 不一定有 .<hash>.js（10-28《抓特务》就没有）：按种子名找，再按「交过去之后新建、里面有迅雷的 .magent_ 种子」找
+            if job.folder == nil, let n = job.name, !n.isEmpty, fm.fileExists(atPath: dir.appendingPathComponent(n).path) {
+                job.folder = dir.appendingPathComponent(n).path
+            }
+            if job.folder == nil {
+                job.folder = kids.first { k in
+                    let created = (try? k.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast
+                    let files = (try? fm.contentsOfDirectory(atPath: k.path)) ?? []
+                    return created > job.createdAt.addingTimeInterval(-120) && files.contains { $0.hasPrefix(".magent_") }
+                }?.path
+            }
+            if job.folder == nil, job.hash == nil {
                 job.folder = kids.filter { ((try? $0.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast) > job.createdAt }
                     .max { a, b in
                         ((try? a.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast)
