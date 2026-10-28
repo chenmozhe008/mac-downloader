@@ -107,7 +107,8 @@ final class VideoSiteRunner: @unchecked Sendable {
             "--progress-template", "download:SDPROG %(progress.downloaded_bytes)s %(progress.total_bytes)s %(progress.total_bytes_estimate)s %(progress.speed)s %(progress.status)s",
             job.url,
         ]
-        p.arguments?.insert(contentsOf: (job.options ?? VideoOptions()).arguments + LocalProxy.ytdlpArguments(for: job.url), at: 0)
+        p.arguments?.insert(contentsOf: (job.options ?? VideoOptions()).arguments + LocalProxy.ytdlpArguments(for: job.url)
+                                     + SiteCookies.ytdlpArguments(for: job.url), at: 0)
         // YouTube 需要 JS 运行环境解签名，没有时部分格式缺失（10-27 实测 44 → 52 个格式）；本机有 Node 就接上
         if let node = ["/opt/homebrew/bin/node", "/usr/local/bin/node"].first(where: { FileManager.default.isExecutableFile(atPath: $0) }) {
             p.arguments?.insert(contentsOf: ["--js-runtimes", "node:" + node], at: 0)
@@ -180,7 +181,12 @@ private final class JobState: @unchecked Sendable {
         lock.withLock {
             job.speed = 0
             if ok { job.state = .done; job.downloaded = max(job.downloaded, job.total) }
-            else { job.state = .failed; job.error = lastError ?? "下载失败" }
+            else {
+                job.state = .failed
+                // 抖音、小红书没带登录信息时 yt-dlp 的报错看不懂，直接告诉怎么办
+                job.error = SiteCookies.site(of: job.url) != nil && SiteCookies.ytdlpArguments(for: job.url).isEmpty
+                    ? "需要在浏览器里登录后，右键「用闪电下载这个视频」" : (lastError ?? "下载失败")
+            }
             if let path = job.filePath, let size = (try? FileManager.default.attributesOfItem(atPath: path))?[.size] as? Int64 {
                 job.total = size; if ok { job.downloaded = size }
             }

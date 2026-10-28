@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "闪电下载",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "浏览器里的下载交给闪电下载；右键链接可直接用闪电下载。",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAjLx3XnL5YY26qyffqyVmlu/M30PNMw3Laz+Cq+WQmyCpORklWSfw2TTWe3/gI9S3LNVXF5bWfywZI1FsWVDH+p6zzWySIMvQFWJlim+HXjfpwEDkSmhV7jcY0evhtEFKKxdI2F1g755tEAICApxVQ8qa31i7exGEI8U4B+AbFbpqKfc4XbkMesWaaTl3p83HLNPSJzWuKEAz9cAONk3Mt3yYOP3fY0V69ajZDdaD+r7jVXhHvrM0cjGJAnfDIUAhzKdStdlCRcJdqXqUglykJy8XBZ/caFvWieb7qPD3GNkFLRHzeArydp8YfOj9yxYtdEeoVEYyzTxRJTU/f7KHGQIDAQAB",
   "permissions": ["downloads", "contextMenus", "cookies", "storage"],

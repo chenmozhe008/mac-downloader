@@ -135,6 +135,7 @@ final class Gateway: @unchecked Sendable {
         guard r.method == "POST", let obj = try? JSONSerialization.jsonObject(with: r.body) as? [String: Any],
               let url = obj["url"] as? String, LinkKind.of(url) != nil else { return (400, json(["ok": false])) }
         let headers = obj["headers"] as? [String: String] ?? [:]
+        if let cookies = obj["cookies"] as? [[String: Any]] { SiteCookies.save(cookies, for: url) }   // 抖音、小红书的登录信息
         await MainActor.run { store?.add(link: url, headers: headers, name: obj["name"] as? String); store?.section = .active }
         return (200, json(["ok": true]))
     }

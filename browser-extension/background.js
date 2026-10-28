@@ -30,13 +30,33 @@ async function headersFor(url, referrer) {
   return headers;
 }
 
+// 抖音、小红书要登录才能拿到视频：把浏览器里这两家的登录信息一起交给 App（只在用户右键这两家的页面时）
+const LOGIN_SITES = ["douyin.com", "xiaohongshu.com"];
+
+async function loginCookies(url) {
+  const host = new URL(url).hostname;
+  const site = LOGIN_SITES.find((d) => host === d || host.endsWith("." + d));
+  if (!site) return undefined;
+  const cookies = await chrome.cookies.getAll({ domain: site });
+  return cookies.map((c) => ({ domain: c.domain, path: c.path, secure: c.secure, expires: c.expirationDate, name: c.name, value: c.value }));
+}
+
+// 抖音网页版看视频时地址常是 ?modal_id=…，换成视频页地址下载工具才认
+function videoPageURL(url) {
+  const u = new URL(url);
+  const id = u.searchParams.get("modal_id") || u.searchParams.get("vid");
+  if (u.hostname.endsWith("douyin.com") && id) return `https://www.douyin.com/video/${id}`;
+  return url;
+}
+
 async function sendToApp(url, referrer) {
   const headers = url.startsWith("http") ? await headersFor(url, referrer) : {};
+  const cookies = url.startsWith("http") ? await loginCookies(url) : undefined;
   try {
     const r = await fetch(APP, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url, headers }),
+      body: JSON.stringify({ url, headers, cookies }),
     });
     return r.ok;
   } catch (_) {
@@ -55,7 +75,13 @@ chrome.downloads.onCreated.addListener(async (item) => {
 });
 
 chrome.contextMenus.onClicked.addListener(async (info) => {
-  const url = info.linkUrl || info.srcUrl;
+  if (info.menuItemId === "shandian-page") {
+    await sendToApp(videoPageURL(info.pageUrl), info.pageUrl);
+    return;
+  }
+  // 抖音、小红书的视频是 blob: 地址，下不了，改交页面地址
+  let url = info.linkUrl || info.srcUrl;
+  if (!url || url.startsWith("blob:")) url = info.pageUrl && videoPageURL(info.pageUrl);
   if (url) await sendToApp(url, info.pageUrl);
 });
 
@@ -64,8 +90,14 @@ chrome.action.onClicked.addListener(async () => {
   await refreshBadge();
 });
 
-chrome.runtime.onInstalled.addListener(() => {
+chrome.runtime.onInstalled.addListener(async () => {
+  await chrome.contextMenus.removeAll();   // 更新扩展时旧菜单还在，先清掉再建
   chrome.contextMenus.create({ id: "shandian", title: "用闪电下载", contexts: ["link", "video", "audio"] });
+  // 抖音、小红书页面上任何地方右键都有，不用找视频元素
+  chrome.contextMenus.create({
+    id: "shandian-page", title: "用闪电下载这个视频", contexts: ["page", "frame", "image"],
+    documentUrlPatterns: ["*://*.douyin.com/*", "*://*.xiaohongshu.com/*"],
+  });
   refreshBadge();
   ping();
 });

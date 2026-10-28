@@ -93,7 +93,7 @@ private struct Sidebar: View {
         .padding(.horizontal, 18).padding(.top, 4).padding(.bottom, 6)
     }
 
-    /// 侧栏底部两行：设置；关于闪电下载 + 版本号（点版本号直接看更新记录）
+    /// 侧栏底部两行，字一样短：设置；关于 + 版本号（点版本号直接看更新记录）
     private var versionRow: some View {
         VStack(alignment: .leading, spacing: 10) {
             SettingsLink {
@@ -109,7 +109,7 @@ private struct Sidebar: View {
                 Button { AppInfo.showAbout(.intro, openWindow) } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "info.circle").frame(width: 16)
-                        Text("关于闪电下载").lineLimit(1).fixedSize()
+                        Text("关于").lineLimit(1).fixedSize()
                         Spacer(minLength: 0)
                     }
                     .contentShape(Rectangle())
