@@ -15,7 +15,7 @@ async function main() {
     const btn = page.querySelector("#dl");
     btn.onclick = async () => {
       btn.disabled = true; btn.textContent = "正在交给闪电下载…";
-      const r = await chrome.runtime.sendMessage({ type: "downloadPage", url: tab.url });
+      const r = await chrome.runtime.sendMessage({ type: "downloadPage", tabId: tab.id });
       btn.textContent = r?.ok ? "已开始下载" : "闪电下载没打开";
       page.querySelector("#hint").textContent = r?.ok ? "在闪电下载里能看到进度。" : "请先打开闪电下载再试。";
       if (r?.ok) setTimeout(() => window.close(), 1200);

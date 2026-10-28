@@ -50,6 +50,38 @@ async function loginCookies(url) {
   return cookies.map((c) => ({ domain: c.domain, path: c.path, secure: c.secure, expires: c.expirationDate, name: c.name, value: c.value }));
 }
 
+// 页面里正在播的视频：浏览器已经拿到了真实地址，直接下它，不用再让下载工具去解析页面
+// （10-28 抖音网页加了签名校验，yt-dlp 拿不到；「精选」这类信息流页面地址里也没有视频编号）
+function pickPlayingVideo() {
+  const area = (v) => {
+    const r = v.getBoundingClientRect();
+    const w = Math.max(0, Math.min(r.right, innerWidth) - Math.max(r.left, 0));
+    const h = Math.max(0, Math.min(r.bottom, innerHeight) - Math.max(r.top, 0));
+    return w * h;
+  };
+  const vids = [...document.querySelectorAll("video")].sort((a, b) => (b.paused ? 0 : 1e9) + area(b) - ((a.paused ? 0 : 1e9) + area(a)));
+  for (const v of vids) {
+    if (area(v) === 0) continue;
+    const srcs = [v.currentSrc, v.src, ...[...v.querySelectorAll("source")].map((s) => s.src)];
+    const src = srcs.find((x) => x && /^https?:/.test(x));
+    if (src) return { src, title: document.title };
+  }
+  return null;
+}
+
+async function downloadVideoInTab(tab) {
+  let picked = null;
+  try {
+    const [res] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: pickPlayingVideo });
+    picked = res?.result;
+  } catch (_) {}
+  if (picked) {
+    const title = (picked.title || "视频").replace(/\s*[-|]\s*(抖音|小红书|哔哩哔哩.*|YouTube)\s*$/, "").trim().slice(0, 80) || "视频";
+    return sendToApp(picked.src, tab.url, title.replace(/[\\/:*?"<>|]/g, " ") + ".mp4");
+  }
+  return sendToApp(videoPageURL(tab.url), tab.url);   // 页面上找不到能直接下的视频，交页面地址给 yt-dlp
+}
+
 // 抖音网页版看视频时地址常是 ?modal_id=…，换成视频页地址下载工具才认
 function videoPageURL(url) {
   const u = new URL(url);
@@ -58,14 +90,14 @@ function videoPageURL(url) {
   return url;
 }
 
-async function sendToApp(url, referrer) {
+async function sendToApp(url, referrer, name) {
   const headers = url.startsWith("http") ? await headersFor(url, referrer) : {};
-  const cookies = url.startsWith("http") ? await loginCookies(url) : undefined;
+  const cookies = url.startsWith("http") ? await loginCookies(referrer || url) : undefined;
   try {
     const r = await fetch(APP, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url, headers, cookies }),
+      body: JSON.stringify({ url, headers, cookies, name }),
     });
     return r.ok;
   } catch (_) {
@@ -83,9 +115,9 @@ chrome.downloads.onCreated.addListener(async (item) => {
   }
 });
 
-chrome.contextMenus.onClicked.addListener(async (info) => {
+chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (info.menuItemId === "shandian-page") {
-    await sendToApp(videoPageURL(info.pageUrl), info.pageUrl);
+    await downloadVideoInTab(tab);
     return;
   }
   // 抖音、小红书的视频是 blob: 地址，下不了，改交页面地址
@@ -97,7 +129,7 @@ chrome.contextMenus.onClicked.addListener(async (info) => {
 // 弹出面板发来的请求
 chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
   if (msg.type === "downloadPage") {
-    sendToApp(videoPageURL(msg.url), msg.url).then((ok) => reply({ ok }));
+    chrome.tabs.get(msg.tabId).then(downloadVideoInTab).then((ok) => reply({ ok }));
     return true; // 异步回复
   }
   if (msg.type === "refreshBadge") refreshBadge();
