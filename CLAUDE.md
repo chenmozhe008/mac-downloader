@@ -79,6 +79,10 @@
 - 维基百科原图（upload.wikimedia.org）对代理机房 IP 按频率随机放行（10-28 实测同一请求隔 3 秒约一半 429），浏览器单请求多试一次就过；闪电下载靠补丁⑥⑦（单连接 + 退避）
 - `download-movie` skill 10-28 改成 `dl_shandian.sh` → `shandian://add?confirm=0&url=…`（不弹确认框）；闪电下载不可用时退回迅雷 `dl_fast.sh`
 
+## 仓库
+
+GitHub 私有库 `chenmozhe008/mac-downloader`（10-28 建，分支 master）。推送仍按全局红线先问用户
+
 ## 目录
 
 `script/` 脚本 · `docs/` 方案 · `tmp/` 临时（用完清）· `output/` 效果图等产物 · `logs/` 内核日志（gitignore）
