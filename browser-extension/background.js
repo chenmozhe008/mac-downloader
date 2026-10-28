@@ -16,7 +16,7 @@ async function refreshBadge() {
   const on = await enabled();
   await chrome.action.setBadgeText({ text: on ? "" : "关" });
   await chrome.action.setBadgeBackgroundColor({ color: "#8E8E93" });
-  await chrome.action.setTitle({ title: on ? "闪电下载：接管下载已开启（点击关闭）" : "闪电下载：接管下载已关闭（点击开启）" });
+  await chrome.action.setTitle({ title: on ? "闪电下载" : "闪电下载：接管下载已关闭" });
 }
 
 // 网盘、登录后才能下的文件要带上浏览器的 Cookie、来源页和 UA，内核才能以同样身份下载
@@ -85,9 +85,13 @@ chrome.contextMenus.onClicked.addListener(async (info) => {
   if (url) await sendToApp(url, info.pageUrl);
 });
 
-chrome.action.onClicked.addListener(async () => {
-  await chrome.storage.local.set({ takeover: !(await enabled()) });
-  await refreshBadge();
+// 弹出面板发来的请求
+chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
+  if (msg.type === "downloadPage") {
+    sendToApp(videoPageURL(msg.url), msg.url).then((ok) => reply({ ok }));
+    return true; // 异步回复
+  }
+  if (msg.type === "refreshBadge") refreshBadge();
 });
 
 chrome.runtime.onInstalled.addListener(async () => {

@@ -1,10 +1,10 @@
 #!/bin/bash
 # dl.sh "<链接或本地.torrent>" —— 统一入口：按类型分给内核（磁力/种子/ed2k/HTTP）或 yt-dlp（视频网站）
-# 落盘：影视类 → /Volumes/Jack Feng/movies；视频网站 → ~/Downloads/视频；其余 → ~/Downloads
+# 落盘：影视类 → /Volumes/Jack Feng/movies；视频网站和其余 → ~/Downloads
 set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; ENGINE_TOKEN=$(python3 -I -c 'import json,os;print(json.load(open(os.path.expanduser("~/Library/Application Support/ShandianDownload/engine.json")))["token"])')
 API="http://127.0.0.1:9999/api/v1"; LINK="$1"
-MOVIES="/Volumes/Jack Feng/movies"; VIDEOS="$HOME/Downloads/视频"; FILES="$HOME/Downloads"
+MOVIES="/Volumes/Jack Feng/movies"; VIDEOS="$HOME/Downloads"; FILES="$HOME/Downloads"
 [ -n "$LINK" ] || { echo "用法: dl.sh <链接>"; exit 1; }
 
 video_site(){ echo "$1" | grep -qiE '^https?://([a-z0-9-]+\.)*(bilibili\.com|b23\.tv|youtube\.com|youtu\.be|douyin\.com|xiaohongshu\.com|xhslink\.com|kuaishou\.com|weibo\.com|ixigua\.com|vimeo\.com|x\.com|twitter\.com)/'; }

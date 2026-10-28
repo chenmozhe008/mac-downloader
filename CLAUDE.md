@@ -11,7 +11,7 @@
   - 内核程序和任务库在本机 `Application Support/ShandianDownload/engine/`（10-28 用户同意从移动硬盘挪来；硬盘上的旧副本 `/Volumes/Jack Feng/Applications/MacDownloader/` 没删，等用户定）
   - App 启动时没有就拉起；退出 App 只暂停任务、不关内核
   - 补丁内容：①块完成记录落盘（bolt，`engine/data/piece-completion`）+ 关掉 .part 文件——anacrolix 用 .part 时启动会把没下完文件的块全标未完成，记录等于白存；②全局限速（config.extra.shandianDownloadLimit，KB/s，BT 和直链共用）；③`PUT /tasks/{id}/stream` 顺序下载、`GET /play/{id}/{key}/{名字}` 边下边送（key=sha256("shandian-play:"+token+":"+id) 前 24 位，播放器带不了请求头）；④新建任务前丢掉「解析」留下的同种子副本，否则文件写到默认目录
-  - Go 工具链、Gopeed 源码、编译缓存都在移动硬盘 `Applications/ShandianBuild/`（不装全局）；本机命令行工具链接器和 SDK 对不上，编译用 CGO_ENABLED=0
+  - Go 工具链、Gopeed 源码、编译缓存都在移动硬盘 `Applications/ShandianBuild/`（不装全局）；**必须开 CGO**（不开 anacrolix 用纯 Go uTP，10-28 实测只剩 1 个连接）；本机命令行工具的链接器和 SDK 对不上，`build_engine.sh` 用移动硬盘上 Xcode-26.5 的工具链
   - 推出移动硬盘：DiskArbitration 推出审批回调里查内核是否开着那块盘上的文件（`EngineHost.holdsFiles`），开着就暂停→结束内核→批准→2 秒后重启，插回自动续
   - 只监听 127.0.0.1，不开 0.0.0.0
 - **视频网站**：yt-dlp + ffmpeg，境外站走代理 7897，B 站/微博等国内站直连。**yt-dlp 用 App 自带的**（`Application Support/ShandianDownload/bin/yt-dlp`，首次启动下载官方 `yt-dlp_macos`、每 7 天 `-U`），brew 里的只做兜底——视频站改版快，10-27 实测 brew 的 2025-04 版下 B 站 412
@@ -27,7 +27,7 @@
 - 浏览器扩展：**用自带的**（`browser-extension/`，MV3，Chrome / Edge 通用；10-28 用户说别绑篡改猴）。打包进 App、启动时拷到 `Application Support/ShandianDownload/BrowserExtension`（浏览器记路径，别指向 dist）。用户在扩展页开开发者模式、拖文件夹进去装一次——浏览器不允许第三方静默装扩展，Chrome 137+ 也不认 `--load-extension`
   - 扩展 ID 由 manifest 的 `key` 固定为 `pggchniffhkcgigajlapkboikmgdipel`，网关 `/extension/*` 只认这个 Origin，不用密钥；改 key 要同步改 `Gateway.extensionOrigin`
   - 接管规则：App 接下了才取消浏览器那边的下载；App 没开浏览器照常下。网盘直链（LinkSwift）仍需篡改猴，设置页里折叠为可选
-- 退出：先 `pauseAll` 让内核落盘再结束进程，下载中的任务记进 `resumeOnLaunch`，下次启动续上（10-28《求救信号》重启内核后丢了 1.8 GB 已下数据，没复现出原因，先加这道保险；**别再直接 pkill 内核**）
+- 退出 App：`pauseAll` 后内核留着不关，下载中的任务记进 `resumeOnLaunch`，下次打开续上（补丁后内核重启也不用校验）
 - 复制即弹（`ClipboardWatcher`）：App 不在前台时，复制磁力/ed2k/种子/网盘/视频站/常见文件链接 → 右上角浮窗；普通网页不弹
 - 代理：启动时探测 Clash（`LocalProxy`），没开就全部直连；开着时只有境外 HTTP / 视频站任务走它，BT 不走
 
@@ -48,7 +48,7 @@
 
 | 项 | 值 | 依据 |
 |---|---|---|
-| 落盘 | 磁力/种子/ed2k → `/Volumes/Jack Feng/movies`；视频站 → `~/Downloads/视频`；其余 → `~/Downloads` | 用户主要下电影；普通文件不混进电影目录 |
+| 落盘 | 磁力/种子/ed2k → `/Volumes/Jack Feng/movies`；视频站和其余 → `~/Downloads`（10-28 用户定：视频网站不再单建「视频」） | 用户主要下电影；普通文件不混进电影目录 |
 | 代理 | 内核全局代理**关**；磁力/种子一律直连；HTTP 直链、视频站按域名判断（`LocalProxy.needed`）：国内站直连，其余单个任务走 `127.0.0.1:7897` | 10-28 实测全局开着时 BT 连接全绕 Clash、上传为 0、速度几 KB～4 MB/s 乱跳；用户定：电影一般在国内下，YouTube 这类境外站才走代理，别一刀切 |
 | HTTP 连接数 | 8 | 清华/中科大/华为云镜像对 16 线程回 403/418（10-27 实测被封） |
 | BT 监听端口 | 6881 固定 | 默认随机端口不利于被连入 |

@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<style>
+  :root { --tint: #E0992F; --text: #222; --sub: #888; --bg: #FBF9F6; --line: #EAE5DD; }
+  @media (prefers-color-scheme: dark) { :root { --text: #EEE; --sub: #999; --bg: #2A2723; --line: #3A3631; } }
+  body { margin: 0; width: 300px; font: 13px -apple-system, "PingFang SC", sans-serif; color: var(--text); background: var(--bg); }
+  .head { display: flex; align-items: center; gap: 10px; padding: 14px 16px 10px; }
+  .head img { width: 28px; height: 28px; }
+  .head b { font-size: 15px; }
+  .page { padding: 0 16px 14px; }
+  .title { color: var(--sub); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 10px; }
+  button.main { width: 100%; height: 40px; border: 0; border-radius: 10px; background: var(--tint); color: #fff;
+    font-size: 15px; font-weight: 600; cursor: pointer; }
+  button.main:disabled { opacity: .6; cursor: default; }
+  .hint { color: var(--sub); font-size: 12px; margin-top: 8px; line-height: 1.5; }
+  .row { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-top: 1px solid var(--line); }
+  .row small { display: block; color: var(--sub); font-size: 11.5px; margin-top: 2px; }
+  input[type=checkbox] { width: 34px; height: 20px; accent-color: var(--tint); }
+</style>
+</head>
+<body>
+  <div class="head"><img src="icons/icon48.png" alt=""><b>闪电下载</b></div>
+  <div class="page" id="page">
+    <div class="title" id="title"></div>
+    <button class="main" id="dl">下载这个视频</button>
+    <div class="hint" id="hint"></div>
+  </div>
+  <label class="row">
+    <span>接管浏览器下载<small>网页上点下载时交给闪电下载</small></span>
+    <input type="checkbox" id="takeover">
+  </label>
+  <script src="popup.js"></script>
+</body>
+</html>

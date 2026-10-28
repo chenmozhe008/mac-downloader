@@ -24,11 +24,14 @@ struct Item: Identifiable, Equatable {
     var thumbRemote: String?
     var linkKey: String         // 去重用：磁力 hash 或原始链接
     var location: URL? = nil    // 移到废纸篓时扔这个：多文件种子是整个文件夹，其余同 file
+    var slow = false            // BT 连续 3 分钟几乎没速度（或解析超过 3 分钟）：界面上建议交给迅雷
+    var link = ""               // 原始链接（交给迅雷用）
     var checking = false        // 重启后内核在校验已下载部分：进度从 0 涨回去，那段「速度」是读本地硬盘，不算下载
     var fileGone = false        // 下完后文件被用户在访达里删了或移走（硬盘没插不算）
     var avgSpeed: Int64 = 0     // 平滑后的速度，算剩余时间用；瞬时速度跳得厉害，行内和顶部估算会对不上
 
     var progress: Double { total > 0 ? min(1, Double(downloaded) / Double(total)) : 0 }
+    var isResolvingState: Bool { if case .resolving = status { return true }; return false }
     var isActive: Bool { if case .done = status { return false }; return true }
 }
 
@@ -79,11 +82,36 @@ final class DownloadStore: ObservableObject {
     private let sleepGuard = SleepGuard()
     private var videoJobs: [VideoJob] = []
     private var pending: [Item] = []
+    /// 还在解析（找种子信息）的磁力 / 种子，存盘：解析可能要很久，期间重启 App 不能丢（10-28 「抓特务」就这么丢了）
+    struct PendingRecord: Codable { var link: String; var headers: [String: String]; var name: String?; var dir: String; var selectFiles: [Int]? }
+    private var pendingRecords: [String: PendingRecord] = [:]
+    private var pendingFile: URL { EngineConfig.supportDir.appendingPathComponent("pending.json") }
+
+    private func savePending() {
+        if let data = try? JSONEncoder().encode(Array(pendingRecords.values)) { try? data.write(to: pendingFile) }
+    }
+
+    private func dropPending(_ id: String) {
+        pending.removeAll { $0.id == id }
+        pendingRecords[id] = nil
+        savePending()
+    }
+
+    /// 启动时把上次没解析完的接着解析
+    private func restorePending() {
+        guard let data = try? Data(contentsOf: pendingFile),
+              let list = try? JSONDecoder().decode([PendingRecord].self, from: data), !list.isEmpty else { return }
+        try? FileManager.default.removeItem(at: pendingFile)
+        for r in list {
+            start(link: r.link, headers: r.headers, name: r.name, dir: URL(fileURLWithPath: r.dir), selectFiles: r.selectFiles)
+        }
+    }
     private var engineItems: [Item] = []
     private var lastStatus: [String: Item.Status] = [:]
     private var engineSeeded = false   // 启动后第一次拿到内核任务列表之前，已完成的都是老任务，不发通知
     private var smoothSpeed: [String: Double] = [:]
     private var autoRetries: [String: (count: Int, at: Date)] = [:]
+    private var slowSince: [String: Date] = [:]
     /// 退出时各 BT 任务已下的量；重启后低于它就是在校验
     private var checkFloor: [String: Int64] = (UserDefaults.standard.dictionary(forKey: "progressAtQuit") as? [String: Int64]) ?? [:]
     private var seenClipboard = Set<String>()
@@ -252,6 +280,7 @@ final class DownloadStore: ObservableObject {
                 }
             }
             UserDefaults.standard.removeObject(forKey: "resumeOnLaunch")
+            restorePending()
         case .failed(let m): engineState = .failed(m)
         }
     }
@@ -293,6 +322,12 @@ final class DownloadStore: ObservableObject {
         all.sort { $0.createdAt > $1.createdAt }
         for k in all.indices {
             all[k].avgSpeed = Int64(smoothSpeed[all[k].id] ?? 0)
+            // 国内热门资源常是迅雷用户之间传，BT 网络里几乎没人：慢了 3 分钟就建议交给迅雷
+            let i = all[k]
+            let isBT = i.origin == "磁力" || i.origin == "种子文件"
+            let stuck = isBT && !i.checking && (i.isResolvingState || (i.status == .running && i.avgSpeed < 50 << 10))
+            if stuck { slowSince[i.id] = slowSince[i.id] ?? Date() } else { slowSince[i.id] = nil }
+            all[k].slow = stuck && Date().timeIntervalSince(slowSince[i.id] ?? Date()) > 180
             if !all[k].isActive, let f = all[k].location ?? all[k].file { all[k].fileGone = Self.isGone(f) }
         }
         // 从未完成变成完成；小文件一个轮询周期就下完，第一次出现就是完成的也算（启动时已有的老任务除外）
@@ -456,10 +491,13 @@ final class DownloadStore: ObservableObject {
         let url = localTorrent ? Self.torrentDataURL(link) ?? link : link
         if kind == .magnet || kind == .torrentFile {
             // 先解析文件列表，只勾主视频和字幕；磁力要先从网络拿到种子信息
-            let placeholder = Item(id: "pending-" + UUID().uuidString, source: .pending, title: PrettyTitle.clean(Self.displayName(link)), rawTitle: Self.displayName(link),
+            var placeholder = Item(id: "pending-" + UUID().uuidString, source: .pending, title: PrettyTitle.clean(Self.displayName(link)), rawTitle: Self.displayName(link),
                                    origin: kind == .magnet ? "磁力" : "种子文件", category: .movie, status: .resolving(Date()),
                                    downloaded: 0, total: 0, speed: 0, file: nil, createdAt: Date(), thumbRemote: nil, linkKey: key)
+            if !localTorrent { placeholder.link = link }
             pending.append(placeholder); rebuild()
+            pendingRecords[placeholder.id] = PendingRecord(link: link, headers: headers, name: name, dir: dir.path, selectFiles: chosenFiles)
+            savePending()
             selectedID = placeholder.id
             notice = "已添加：\(placeholder.title)"
             Task {
@@ -468,7 +506,7 @@ final class DownloadStore: ObservableObject {
                 if kind == .torrentFile, !localTorrent {
                     guard let data = await Self.fetchTorrent(link) else {
                         notice = "无法获取种子文件"
-                        pending.removeAll { $0.id == placeholder.id }; rebuild(); return
+                        dropPending(placeholder.id); rebuild(); return
                     }
                     url = "data:application/x-bittorrent;base64," + data.base64EncodedString()
                 }
@@ -482,7 +520,7 @@ final class DownloadStore: ObservableObject {
                     let id = try await host.client.create(url: url, directory: dir.path, selectFiles: select)
                     if selectedID == placeholder.id { selectedID = id }
                 } catch { notice = "添加失败：\(error.localizedDescription)" }
-                pending.removeAll { $0.id == placeholder.id }
+                dropPending(placeholder.id)
                 await poll()
             }
         } else {
@@ -539,8 +577,23 @@ final class DownloadStore: ObservableObject {
             if moveFiles, let f = file { Self.trash(f) }
             rebuild()
         case .pending:
-            pending.removeAll { $0.id == item.id }; rebuild()
+            dropPending(item.id); rebuild()
         }
+    }
+
+    static let thunder = URL(fileURLWithPath: "/Applications/Thunder.app")
+    static var hasThunder: Bool { FileManager.default.fileExists(atPath: thunder.path) }
+
+    /// 交给迅雷：迅雷有自己的加速服务器和用户网络，国内热门资源常比 BT 快很多（10-28 实测同一部片迅雷 3–5 MB/s、BT 0）。
+    /// 迅雷会弹出它的新建任务窗口，保存位置预设成这个任务的位置；我们这边的任务暂停，免得两边都下
+    func handToThunder(_ item: Item) {
+        guard Self.hasThunder, !item.link.isEmpty else { return }
+        let dir = (item.location ?? item.file)?.deletingLastPathComponent().path ?? Folders.movies.path
+        UserDefaults(suiteName: "com.xunlei.Thunder")?.set(dir, forKey: "LastSavePath")
+        NSWorkspace.shared.open([URL(string: item.link)!], withApplicationAt: Self.thunder, configuration: NSWorkspace.OpenConfiguration(), completionHandler: nil)
+        if case .engine(let id) = item.source, item.status != .paused { Task { try? await host.client.pause(id) } }
+        if case .pending = item.source { dropPending(item.id); rebuild() }
+        notice = "已交给迅雷，请在迅雷窗口里点「立即下载」"
     }
 
     /// 能边下边播的播放器（能播正在写入的文件）；QuickTime 不行
@@ -729,11 +782,14 @@ final class DownloadStore: ObservableObject {
         }
         let created = ISO8601DateFormatter.flexible.date(from: t.createdAt ?? "") ?? .distantPast
         let rawTitle = t.name?.isEmpty == false ? t.name! : resName.isEmpty ? displayName(url) : resName
-        return Item(id: t.id, source: .engine(t.id), title: PrettyTitle.clean(rawTitle), rawTitle: rawTitle,
+        var it = Item(id: t.id, source: .engine(t.id), title: PrettyTitle.clean(rawTitle), rawTitle: rawTitle,
                     origin: origin, category: category, status: status, downloaded: min(t.progress.downloaded, max(total, t.progress.downloaded)),
                     total: total, speed: status == .running ? t.progress.speed : 0, file: main, createdAt: created, thumbRemote: nil,
                     linkKey: linkKey(lower.hasPrefix("magnet:") || t.meta.res?.hash == nil ? url : "btih:" + (t.meta.res?.hash ?? "")),
                     location: location)
+        // 迅雷只认磁力和网页链接；本地种子交给内核时是 data: 地址，交不了
+        if lower.hasPrefix("magnet:") || lower.hasPrefix("http") { it.link = url }
+        return it
     }
 
     private static func item(from j: VideoJob) -> Item {

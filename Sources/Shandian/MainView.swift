@@ -93,36 +93,26 @@ private struct Sidebar: View {
         .padding(.horizontal, 18).padding(.top, 4).padding(.bottom, 6)
     }
 
-    /// 侧栏底部两行，字一样短：设置；关于 + 版本号（点版本号直接看更新记录）
+    /// 侧栏底部一行：设置、关于、版本号（点版本号直接看更新记录）
     private var versionRow: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        HStack(spacing: 16) {
             SettingsLink {
-                HStack(spacing: 6) {
-                    Image(systemName: "gearshape").frame(width: 16)
-                    Text("设置").lineLimit(1).fixedSize()
-                    Spacer(minLength: 0)
-                }
-                .contentShape(Rectangle())
+                Label("设置", systemImage: "gearshape").fixedSize()
             }
             .help("设置（⌘,）")
-            HStack(spacing: 6) {
-                Button { AppInfo.showAbout(.intro, openWindow) } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "info.circle").frame(width: 16)
-                        Text("关于").lineLimit(1).fixedSize()
-                        Spacer(minLength: 0)
-                    }
-                    .contentShape(Rectangle())
-                }
-                .help("关于闪电下载")
-                Button { AppInfo.showAbout(.changelog, openWindow) } label: {
-                    Text(AppInfo.version).monospacedDigit().lineLimit(1).fixedSize()
-                        .padding(.horizontal, 7).padding(.vertical, 2)
-                        .background(Capsule().fill(Theme.faint))
-                }
-                .help("查看更新记录")
+            Button { AppInfo.showAbout(.intro, openWindow) } label: {
+                Label("关于", systemImage: "info.circle").fixedSize()
             }
+            .help("关于闪电下载")
+            Spacer(minLength: 0)
+            Button { AppInfo.showAbout(.changelog, openWindow) } label: {
+                Text("v" + AppInfo.version).monospacedDigit().lineLimit(1).fixedSize()
+                    .padding(.horizontal, 7).padding(.vertical, 2)
+                    .background(Capsule().fill(Theme.faint))
+            }
+            .help("查看更新记录")
         }
+        .labelStyle(.titleAndIcon)
         .buttonStyle(.plain)
         .font(.system(size: 12.5)).foregroundStyle(Theme.sub)
         .padding(.horizontal, 18)
@@ -418,7 +408,16 @@ struct TaskRow: View {
             }
             VStack(alignment: .trailing, spacing: 3) {
                 Text(primary).font(.system(size: 15, weight: .medium)).monospacedDigit()
-                Text(secondary).font(.system(size: 13)).foregroundStyle(Theme.sub).monospacedDigit()
+                if item.slow, !item.link.isEmpty, DownloadStore.hasThunder {
+                    // BT 里几乎没人传：给个直接的出路
+                    Button { store.handToThunder(item) } label: {
+                        Text("太慢？交给迅雷").font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Theme.tint)
+                    }
+                    .buttonStyle(.plain)
+                    .help("这个资源在 BT 网络里几乎没人分享；迅雷有自己的加速网络，通常快很多")
+                } else {
+                    Text(secondary).font(.system(size: 13)).foregroundStyle(Theme.sub).monospacedDigit()
+                }
             }
             .frame(width: 140, alignment: .trailing)
             HStack(spacing: 6) {
@@ -521,6 +520,9 @@ private struct ItemMenu: View {
                 Button(item.status == .paused ? "继续" : "暂停") { store.togglePause(item) }
             }
             if item.canStream { Button("边下边播") { store.playWhileDownloading(item) } }
+            if item.isActive, !item.link.isEmpty, DownloadStore.hasThunder, item.origin == "磁力" || item.origin == "种子文件" {
+                Button("用迅雷下载") { store.handToThunder(item) }
+            }
             Divider()
             Button("移除…") { store.removalTarget = item }
         }
