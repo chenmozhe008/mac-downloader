@@ -410,13 +410,13 @@ struct TaskRow: View {
             }
             VStack(alignment: .trailing, spacing: 3) {
                 Text(primary).font(.system(size: 15, weight: .medium)).monospacedDigit()
-                if item.slow, !item.link.isEmpty, ThunderBridge.installed {
-                    // BT 里几乎没人传：给个直接的出路
-                    Button { store.handToThunder(item) } label: {
-                        Text("太慢？交给迅雷").font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Theme.tint)
+                if item.slow, !item.link.isEmpty {
+                    // BT 里几乎没人传：给个直接的出路（云盘离线；没登录就去设置）
+                    Button { store.sendToCloud(item) } label: {
+                        Text("太慢？云盘离线").font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Theme.tint)
                     }
                     .buttonStyle(.plain)
-                    .help("这个资源在 BT 网络里几乎没人分享；迅雷有自己的加速网络，通常快很多")
+                    .help("这个资源在 BT 网络里几乎没人分享；交给 PikPak 服务器下好，再从云盘满速拉回")
                 } else {
                     Text(secondary).font(.system(size: 13)).foregroundStyle(Theme.sub).monospacedDigit()
                 }
@@ -426,6 +426,11 @@ struct TaskRow: View {
                 if item.canStream {
                     CircleIconButton(symbol: store.buffering.contains(item.id) ? "hourglass" : "play.tv",
                                      help: store.buffering.contains(item.id) ? "正在缓冲片头" : "边下边播") { store.playWhileDownloading(item) }
+                }
+                if case .thunder = item.source, item.isActive {
+                    // 迅雷那边的任务：边下边播直接打开迅雷已写好的部分；暂停到迅雷里操作
+                    if item.file != nil { CircleIconButton(symbol: "play.tv", help: "边下边播") { store.playThunderFile(item) } }
+                    CircleIconButton(symbol: "arrow.up.forward.app", help: "在迅雷中查看（暂停、继续）") { NSWorkspace.shared.open(ThunderBridge.app) }
                 }
                 if case .engine = item.source {
                     CircleIconButton(symbol: item.status == .paused || item.isFailed ? "play.fill" : "pause.fill",
@@ -468,6 +473,7 @@ struct TaskRow: View {
     }
     private var secondary: String {
         switch item.status {
+        case .running where item.cloudProgress != nil: "云端下载中 \(item.cloudProgress ?? 0)%"
         case .running where store.buffering.contains(item.id): "正在打开播放器"
         case .running where item.checking: "核对已下载的部分"
         case .running: item.avgSpeed > 0 ? remainingText(Double(item.total - item.downloaded) / Double(item.avgSpeed)) : "正在连接"
@@ -523,8 +529,9 @@ private struct ItemMenu: View {
             }
             if item.canStream { Button("边下边播") { store.playWhileDownloading(item) } }
             if case .thunder = item.source, item.isActive { Button("在迅雷中查看") { NSWorkspace.shared.open(ThunderBridge.app) } }
-            if item.isActive, !item.link.isEmpty, ThunderBridge.installed, item.origin == "磁力" || item.origin == "种子文件" {
-                Button("用迅雷下载") { store.handToThunder(item) }
+            if item.isActive, !item.link.isEmpty, item.origin == "磁力" || item.origin == "种子文件" {
+                Button("交给云盘离线（PikPak）") { store.sendToCloud(item) }
+                if ThunderBridge.installed { Button("用迅雷下载") { store.handToThunder(item) } }
             }
             Divider()
             Button("移除…") { store.removalTarget = item }

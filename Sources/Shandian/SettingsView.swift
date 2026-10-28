@@ -10,7 +10,9 @@ enum Prefs {
     static let notifyKey = "notifyOnFinish"
     static let downloadLimitKey = "downloadLimit"   // KB/s，0 不限
     static let autoThunderKey = "autoThunder"
-    static var autoThunder: Bool { UserDefaults.standard.object(forKey: autoThunderKey) as? Bool ?? true }
+    static var autoThunder: Bool { UserDefaults.standard.object(forKey: autoThunderKey) as? Bool ?? false }   // 10-28 用户：不想用迅雷
+    static let autoCloudKey = "autoCloud"
+    static var autoCloud: Bool { UserDefaults.standard.object(forKey: autoCloudKey) as? Bool ?? true }
     static var downloadLimit: Int { UserDefaults.standard.integer(forKey: downloadLimitKey) }
 
     static var maxRunning: Int { let v = UserDefaults.standard.integer(forKey: maxRunningKey); return v > 0 ? v : 5 }
@@ -43,7 +45,13 @@ struct SettingsView: View {
     @AppStorage(Prefs.preventSleepKey) private var preventSleep = true
     @AppStorage(Prefs.notifyKey) private var notify = true
     @AppStorage(Prefs.downloadLimitKey) private var limit = 0
-    @AppStorage(Prefs.autoThunderKey) private var autoThunder = true
+    @AppStorage(Prefs.autoThunderKey) private var autoThunder = false
+    @AppStorage(Prefs.autoCloudKey) private var autoCloud = true
+    @State private var pkUser = ""
+    @State private var pkPass = ""
+    @State private var pkState = PikPak.loggedInUser
+    @State private var pkBusy = false
+    @State private var pkError = ""
     @AppStorage(ClipboardWatcher.enabledKey) private var watchClipboard = true
     @AppStorage(NewTaskPanels.askKey) private var confirmNew = true
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
@@ -71,11 +79,37 @@ struct SettingsView: View {
                 }
                 .onChange(of: limit) { store.reapplyEngineSettings() }
                 if ThunderBridge.installed {
-                    Toggle("磁力、种子太慢时自动交给迅雷", isOn: $autoThunder)
+                    Toggle("磁力、种子太慢时交给迅雷（没登录云盘时）", isOn: $autoThunder)
                         .help("连续 3 分钟几乎没速度时，用本机的迅雷接着下，进度仍显示在闪电下载里")
                 }
                 Toggle("新建任务时显示确认框", isOn: $confirmNew)
                 Toggle("复制链接后弹出下载提示", isOn: $watchClipboard)
+            }
+
+            Section("云盘离线（PikPak）") {
+                if let u = pkState {
+                    LabeledContent("已登录") {
+                        HStack { Text(u).foregroundStyle(Theme.sub); Button("退出") { Task { await PikPak.shared.logout(); pkState = nil } } }
+                    }
+                    Toggle("磁力、种子太慢时自动交给云盘离线", isOn: $autoCloud)
+                        .help("BT 网络里几乎没人传的资源，交给 PikPak 服务器下好，再从云盘满速拉回")
+                } else {
+                    TextField("邮箱或手机号", text: $pkUser)
+                    SecureField("密码", text: $pkPass)
+                    HStack {
+                        Button(pkBusy ? "正在登录…" : "登录") {
+                            pkBusy = true; pkError = ""
+                            Task {
+                                do { try await PikPak.shared.login(username: pkUser, password: pkPass); pkState = PikPak.loggedInUser; pkPass = "" }
+                                catch { pkError = error.localizedDescription }
+                                pkBusy = false
+                            }
+                        }
+                        .disabled(pkUser.isEmpty || pkPass.isEmpty || pkBusy)
+                        if !pkError.isEmpty { Text(pkError).foregroundStyle(Theme.failed).font(.system(size: 12)) }
+                    }
+                    Text("没有账号先去 mypikpak.com 免费注册（需开代理）。密码只用来登录，不保存。").font(.system(size: 12)).foregroundStyle(Theme.sub)
+                }
             }
 
             Section("系统") {

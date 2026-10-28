@@ -6,7 +6,7 @@ import Foundation
 
 /// 界面上的一条下载，内核任务和视频站任务统一成这一种
 struct Item: Identifiable, Equatable {
-    enum Source: Equatable { case engine(String), video(UUID), pending, thunder(String) }
+    enum Source: Equatable { case engine(String), video(UUID), pending, thunder(String), cloud(String) }
     enum Status: Equatable { case resolving(Date), running, waiting, paused, done, failed(String) }
 
     var id: String
@@ -24,6 +24,7 @@ struct Item: Identifiable, Equatable {
     var thumbRemote: String?
     var linkKey: String         // 去重用：磁力 hash 或原始链接
     var location: URL? = nil    // 移到废纸篓时扔这个：多文件种子是整个文件夹，其余同 file
+    var cloudProgress: Int?     // 云盘离线中：云端进度（0–100）
     var slow = false            // BT 连续 3 分钟几乎没速度（或解析超过 3 分钟）：界面上建议交给迅雷
     var link = ""               // 原始链接（交给迅雷用）
     var checking = false        // 重启后内核在校验已下载部分：进度从 0 涨回去，那段「速度」是读本地硬盘，不算下载
@@ -114,6 +115,24 @@ final class DownloadStore: ObservableObject {
     private var autoRetries: [String: (count: Int, at: Date)] = [:]
     private var slowSince: [String: Date] = [:]
     private var thunderJobs: [ThunderJob] = ThunderBridge.load()
+
+    /// 云盘离线（PikPak）中的任务：云端下好后拉回本地
+    struct CloudJob: Codable, Equatable {
+        var id: String; var title: String; var link: String; var dir: String
+        var engineID: String?; var partial: String?; var total: Int64
+        var taskID = ""; var fileID = ""; var progress = 0; var createdAt = Date()
+    }
+    private var cloudJobs: [CloudJob] = DownloadStore.loadCloud()
+    private var cloudPolling = false
+    private static var cloudFile: URL { EngineConfig.supportDir.appendingPathComponent("cloud.json") }
+    private static func loadCloud() -> [CloudJob] {
+        let dec = JSONDecoder(); dec.dateDecodingStrategy = .iso8601
+        return (try? Data(contentsOf: cloudFile)).flatMap { try? dec.decode([CloudJob].self, from: $0) } ?? []
+    }
+    private func saveCloud() {
+        let enc = JSONEncoder(); enc.dateEncodingStrategy = .iso8601
+        if let d = try? enc.encode(cloudJobs) { try? d.write(to: Self.cloudFile) }
+    }
 
     /// 回收站（参照迅雷）：移除的任务留一条记录，能重新下载、找到文件
     struct RemovedRecord: Codable, Identifiable, Equatable {
@@ -315,6 +334,7 @@ final class DownloadStore: ObservableObject {
             }
             UserDefaults.standard.removeObject(forKey: "resumeOnLaunch")
             restorePending()
+            if !cloudJobs.isEmpty { pollCloud() }
         case .failed(let m): engineState = .failed(m)
         }
     }
@@ -356,7 +376,8 @@ final class DownloadStore: ObservableObject {
 
     private func rebuild() {
         let videos = videoJobs.map(Self.item(from:))
-        var all = pending + engineItems + videos + thunderJobs.map(Self.item(from:))
+        var all = pending + engineItems.filter { e in !cloudJobs.contains { "\($0.engineID ?? "")" == e.id } }
+            + videos + thunderJobs.map(Self.item(from:)) + cloudJobs.map(Self.item(from:))
         all.sort { $0.createdAt > $1.createdAt }
         for k in all.indices {
             all[k].avgSpeed = Int64(smoothSpeed[all[k].id] ?? 0)
@@ -366,10 +387,15 @@ final class DownloadStore: ObservableObject {
             let stuck = isBT && !i.checking && (i.isResolvingState || (i.status == .running && i.avgSpeed < 50 << 10))
             if stuck { slowSince[i.id] = slowSince[i.id] ?? Date() } else { slowSince[i.id] = nil }
             all[k].slow = stuck && Date().timeIntervalSince(slowSince[i.id] ?? Date()) > 180
-            if all[k].slow, Prefs.autoThunder, ThunderBridge.installed, !all[k].link.isEmpty, !autoHanded.contains(i.id) {
-                autoHanded.insert(i.id)
+            if all[k].slow, !all[k].link.isEmpty, !autoHanded.contains(i.id) {
                 let it = all[k]
-                Task { @MainActor in self.handToThunder(it) }
+                if Prefs.autoCloud, PikPak.loggedInUser != nil {
+                    autoHanded.insert(i.id)
+                    Task { @MainActor in self.sendToCloud(it) }
+                } else if Prefs.autoThunder, ThunderBridge.installed {
+                    autoHanded.insert(i.id)
+                    Task { @MainActor in self.handToThunder(it) }
+                }
             }
             if !all[k].isActive, let f = all[k].location ?? all[k].file { all[k].fileGone = Self.isGone(f) }
         }
@@ -633,11 +659,85 @@ final class DownloadStore: ObservableObject {
             // 迅雷那边的任务请在迅雷里管；这里只是不再显示，选了就把文件移到废纸篓
             if moveFiles, let f = file { Self.trash(f) }
             forgetThunder(id)
+        case .cloud(let id):
+            // 不再等云端；原来暂停着的 BT 任务一并移除
+            if let e = cloudJobs.first(where: { $0.id == id })?.engineID { Task { try? await host.client.delete(e, withFiles: false); await poll() } }
+            cloudJobs.removeAll { $0.id == id }; saveCloud(); rebuild()
         }
     }
 
     static let thunder = URL(fileURLWithPath: "/Applications/Thunder.app")
     static var hasThunder: Bool { FileManager.default.fileExists(atPath: thunder.path) }
+
+    /// 云盘离线：BT 任务先暂停（云盘失败了还能接着 BT），交给 PikPak；云端下好后按直链拉回同一个位置
+    func sendToCloud(_ item: Item) {
+        guard PikPak.loggedInUser != nil else { notice = "先在设置里登录 PikPak，才能用云盘离线"; return }
+        guard !item.link.isEmpty, !cloudJobs.contains(where: { $0.link == item.link }) else { return }
+        let base = item.location ?? item.file
+        let dir = (item.location != nil && item.location != item.file ? item.location?.deletingLastPathComponent() : item.file?.deletingLastPathComponent())?.path
+            ?? (pendingRecords[item.id]?.dir ?? Folders.movies.path)
+        var engineID: String?
+        switch item.source {
+        case .engine(let id): engineID = id; Task { try? await host.client.pause(id) }
+        case .pending: dropPending(item.id)
+        default: return
+        }
+        let job = CloudJob(id: "cloud-" + UUID().uuidString, title: item.title, link: item.link, dir: dir,
+                           engineID: engineID, partial: base?.path, total: item.total)
+        cloudJobs.append(job); saveCloud(); selectedID = job.id; rebuild()
+        Task {
+            do {
+                let t = try await PikPak.shared.offline(item.link)
+                if let k = cloudJobs.firstIndex(where: { $0.id == job.id }) {
+                    cloudJobs[k].taskID = t.id; cloudJobs[k].fileID = t.fileID; cloudJobs[k].progress = t.progress; saveCloud()
+                }
+                notice = "已交给 PikPak 云盘离线「\(item.title)」"
+                pollCloud()
+            } catch { cloudFailed(job.id, error.localizedDescription) }
+        }
+    }
+
+    private func cloudFailed(_ id: String, _ message: String) {
+        guard let job = cloudJobs.first(where: { $0.id == id }) else { return }
+        cloudJobs.removeAll { $0.id == id }; saveCloud()
+        if let e = job.engineID { Task { try? await host.client.resume(e) } }   // 退回 BT 接着下
+        notice = "云盘离线失败：\(message)，已改回 BT 继续"
+        rebuild()
+    }
+
+    /// 每 5 秒查一次云端进度；下好后取直链交给内核，删掉原来的 BT 任务和它下的那一点
+    private func pollCloud() {
+        guard !cloudPolling else { return }
+        cloudPolling = true
+        Task {
+            defer { cloudPolling = false }
+            while !cloudJobs.isEmpty {
+                for job in cloudJobs where !job.taskID.isEmpty {
+                    guard let t = try? await PikPak.shared.status(job.taskID, fileID: job.fileID) else { continue }
+                    if t.phase == "PHASE_TYPE_ERROR" { cloudFailed(job.id, t.message ?? "云端下载出错"); continue }
+                    if let k = cloudJobs.firstIndex(where: { $0.id == job.id }) { cloudJobs[k].progress = t.progress }
+                    guard t.phase == "PHASE_TYPE_COMPLETE" else { continue }
+                    do {
+                        let files = try await PikPak.shared.files(of: t.fileID.isEmpty ? job.fileID : t.fileID)
+                        guard !files.isEmpty else { cloudFailed(job.id, "云端没有可下载的文件"); continue }
+                        if let e = job.engineID { try? await host.client.delete(e, withFiles: false) }
+                        if let p = job.partial, FileManager.default.fileExists(atPath: p) {
+                            try? FileManager.default.trashItem(at: URL(fileURLWithPath: p), resultingItemURL: nil)
+                        }
+                        for f in files {
+                            let id = try await host.client.create(url: f.url, directory: job.dir, name: f.name)
+                            if f.size == files.map(\.size).max() { selectedID = id }
+                        }
+                        cloudJobs.removeAll { $0.id == job.id }; saveCloud()
+                        notice = "「\(job.title)」云端已下好，正在从云盘拉回"
+                        await poll()
+                    } catch { cloudFailed(job.id, error.localizedDescription) }
+                }
+                saveCloud(); rebuild()
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+            }
+        }
+    }
 
     /// 交给迅雷（见 ThunderBridge）：我们这边的任务删掉、已下的一点点移到废纸篓（同名文件会和迅雷打架），
     /// 换成一条「迅雷」任务，进度从迅雷写的文件里量
@@ -666,6 +766,13 @@ final class DownloadStore: ObservableObject {
             self?.notice = clicked ? "已交给迅雷下载「\(item.title)」，进度显示在这里"
                                    : "已在迅雷中打开，请在迅雷窗口点「立即下载」（给闪电下载开「辅助功能」权限后可自动点）"
         }
+    }
+
+    /// 迅雷任务边下边播：迅雷大体按顺序写文件，直接用播放器打开正在写的文件
+    func playThunderFile(_ item: Item) {
+        guard let f = item.file else { return }
+        guard let player = Self.streamPlayer else { notice = "边下边播需要 IINA 或 VLC 播放器"; return }
+        NSWorkspace.shared.open([f], withApplicationAt: player, configuration: NSWorkspace.OpenConfiguration(), completionHandler: nil)
     }
 
     func forgetThunder(_ id: String) {
@@ -817,7 +924,7 @@ final class DownloadStore: ObservableObject {
                 Task { @MainActor in self?.updateVideo(updated) }
             }
         case .engine: togglePause(item)
-        case .pending, .thunder: break
+        case .pending, .thunder, .cloud: break
         }
     }
 
@@ -844,7 +951,8 @@ final class DownloadStore: ObservableObject {
         let lower = url.lowercased()
         let host = URL(string: url)?.host?.lowercased() ?? ""
         let pan = lower.hasPrefix("http") ? panHosts.first { host.contains($0.0) }?.1 : nil
-        let origin: String = lower.hasPrefix("magnet:") ? "磁力" : lower.hasPrefix("data:") ? "种子文件"
+        let origin: String = host.hasSuffix("mypikpak.com") || host.contains("pikpak") ? "PikPak 云盘"
+            : lower.hasPrefix("magnet:") ? "磁力" : lower.hasPrefix("data:") ? "种子文件"
             : lower.hasPrefix("ed2k:") ? "ed2k" : pan ?? host
         let isVideo = main.map { FileSelection.videoExt.contains($0.pathExtension.lowercased()) } ?? false
         let category: Category = pan != nil ? .cloud : (t.protocol == "bt" || lower.hasPrefix("ed2k:") || isVideo) ? .movie : .other
@@ -865,6 +973,15 @@ final class DownloadStore: ObservableObject {
                     location: location)
         // 迅雷只认磁力和网页链接；本地种子交给内核时是 data: 地址，交不了
         if lower.hasPrefix("magnet:") || lower.hasPrefix("http") { it.link = url }
+        return it
+    }
+
+    private static func item(from j: CloudJob) -> Item {
+        var it = Item(id: j.id, source: .cloud(j.id), title: j.title, rawTitle: j.title, origin: "PikPak 云盘", category: .movie,
+                      status: .running, downloaded: Int64(Double(j.total) * Double(j.progress) / 100), total: j.total, speed: 0,
+                      file: nil, createdAt: j.createdAt, thumbRemote: nil, linkKey: linkKey(j.link), location: nil)
+        it.link = j.link
+        it.cloudProgress = j.progress
         return it
     }
 
