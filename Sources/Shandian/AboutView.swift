@@ -176,7 +176,7 @@ private struct IntroPage: View {
             VStack(alignment: .leading, spacing: 12) {
                 SectionTitle("支持的来源")
                 FlowChips(items: sources)
-                Text("抖音、小红书暂不支持（需要登录信息，正在适配）。").font(.system(size: 12.5)).foregroundStyle(Theme.sub)
+                Text("抖音暂不支持（网页版视频加密，开源工具目前都下不了）；小红书在浏览器登录后，用扩展「下载这个视频」。").font(.system(size: 12.5)).foregroundStyle(Theme.sub)
             }
             VStack(alignment: .leading, spacing: 12) {
                 SectionTitle("使用说明")

@@ -486,7 +486,11 @@ final class DownloadStore: ObservableObject {
         var fresh: [String] = []
         for l in links where LinkKind.of(l) != nil {
             seenClipboard.insert(l)
-            if let existing = items.first(where: { $0.linkKey == Self.linkKey(l) }) { notice = "「\(existing.title)」已在列表中"; continue }
+            if let existing = items.first(where: { $0.linkKey == Self.linkKey(l) }) {
+                // 之前失败的同一个链接再交过来：当作重试，不挡
+                if case .failed = existing.status { retry(existing); notice = "重新下载「\(existing.title)」"; continue }
+                notice = "「\(existing.title)」已在列表中"; continue
+            }
             if !fresh.contains(l) { fresh.append(l) }
         }
         guard !fresh.isEmpty else { return }

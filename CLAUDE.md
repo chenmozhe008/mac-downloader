@@ -66,7 +66,7 @@
 
 ## 已知事项
 
-- 抖音、小红书（10-28 用户定的做法）：不在 App 里做登录，用户在浏览器里登录着，扩展右键「用闪电下载这个视频」把页面地址 + 这两家 Cookie 交给网关，存成 `Application Support/ShandianDownload/cookies-<douyin|xhs>.txt`（600）给 yt-dlp `--cookies`（`SiteCookies.swift`）；抖音 `?modal_id=` 地址扩展里换成 `/video/<id>`。**10-28 实测 yt-dlp 抖音带登录 Cookie 也 403**（网页 API 加了签名校验），所以扩展先在页面里找正在播的 `<video>` 真实地址（http 开头）直接交给内核当直链下，带 Referer/UA/Cookie；找不到才退回页面地址给 yt-dlp
+- 抖音、小红书（10-28 用户定的做法）：不在 App 里做登录，用户在浏览器里登录着，扩展右键「用闪电下载这个视频」把页面地址 + 这两家 Cookie 交给网关，存成 `Application Support/ShandianDownload/cookies-<douyin|xhs>.txt`（600）给 yt-dlp `--cookies`（`SiteCookies.swift`）；抖音 `?modal_id=` 地址扩展里换成 `/video/<id>`。**10-28 实测 yt-dlp 抖音带登录 Cookie 也 403**（网页 API 加了签名校验），所以扩展先在页面里找正在播的 `<video>` 真实地址（http 开头）直接交给内核当直链下，带 Referer/UA/Cookie；找不到才退回页面地址给 yt-dlp。**10-28 实测抖音不行**：播放器是 blob（MSE 分段），页面 RENDER_DATA 里也没有 playAddr，用户说抖音先不做；小红书待实测
 - 视频站实测（10-27，最新 yt-dlp）：B 站不登录 1080P ✅、微博 1080P ✅；抖音要「新鲜 cookie」，匿名 ttwid 也 403 ❌；小红书 yt-dlp 自带测试笔记拿不到视频 ❌（待用真实链接复测）。B 站 1080P+/4K 要登录 cookie
 - lux（iawia002/lux）最后发版 2024-05，抖音/小红书失效、B 站只有 480P，不用
 - Gopeed API 新建任务参数是 `opts`（不是 `opt`），写错不报错、路径静默失效
