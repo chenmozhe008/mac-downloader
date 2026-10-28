@@ -719,7 +719,7 @@ final class DownloadStore: ObservableObject {
                     let finished = ids.allSatisfy { id in engineItems.first { $0.id == id }.map { !$0.isActive } ?? true }
                     if finished {
                         if !job.fileID.isEmpty { await PikPak.shared.deleteForever(job.fileID) }
-                        cloudJobs.removeAll { $0.id == job.id }
+                        cloudJobs.removeAll { $0.id == job.id }; saveCloud()
                     }
                 }
                 for job in cloudJobs where !job.taskID.isEmpty && job.pulling == nil {

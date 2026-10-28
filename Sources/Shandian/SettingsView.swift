@@ -12,7 +12,7 @@ enum Prefs {
     static let autoThunderKey = "autoThunder"
     static var autoThunder: Bool { UserDefaults.standard.object(forKey: autoThunderKey) as? Bool ?? false }   // 10-28 用户：不想用迅雷
     static let autoCloudKey = "autoCloud"
-    static var autoCloud: Bool { UserDefaults.standard.object(forKey: autoCloudKey) as? Bool ?? true }
+    static var autoCloud: Bool { UserDefaults.standard.object(forKey: autoCloudKey) as? Bool ?? false }   // 免费每天 3 次，不自动用
     static var downloadLimit: Int { UserDefaults.standard.integer(forKey: downloadLimitKey) }
 
     static var maxRunning: Int { let v = UserDefaults.standard.integer(forKey: maxRunningKey); return v > 0 ? v : 5 }
@@ -46,7 +46,7 @@ struct SettingsView: View {
     @AppStorage(Prefs.notifyKey) private var notify = true
     @AppStorage(Prefs.downloadLimitKey) private var limit = 0
     @AppStorage(Prefs.autoThunderKey) private var autoThunder = false
-    @AppStorage(Prefs.autoCloudKey) private var autoCloud = true
+    @AppStorage(Prefs.autoCloudKey) private var autoCloud = false
     @State private var pkState = PikPak.loggedInUser
     @Environment(\.openWindow) private var openWindow
     @AppStorage(ClipboardWatcher.enabledKey) private var watchClipboard = true
@@ -90,6 +90,7 @@ struct SettingsView: View {
                     }
                     Toggle("磁力、种子太慢时自动交给云盘离线", isOn: $autoCloud)
                         .help("BT 网络里几乎没人传的资源，交给 PikPak 服务器下好，再从云盘满速拉回")
+                    Text("免费账号每天约 3 次，默认不自动用；卡住的任务右键「交给云盘离线」。").font(.system(size: 12)).foregroundStyle(Theme.sub)
                 } else {
                     LabeledContent("PikPak 账号") {
                         HStack {

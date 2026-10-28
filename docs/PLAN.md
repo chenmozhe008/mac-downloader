@@ -72,7 +72,7 @@
 - [ ] 后续：网盘直链体验（LinkSwift 依赖篡改猴）
 
 ## 待办（10-28 收工时，下次从这里接）
-- [ ] **云盘离线（PikPak）先验证再接**：用户同意由 Claude 在 Chrome 的 PikPak 网页里加一个测试离线任务（《年会不能停2》磁力），看①几秒内是否完成 ②从云盘下载速度。值得才继续；不值得就停，如实告诉用户「迅雷用户之间传的资源不用迅雷没有可靠免费办法」
+- [x] **云盘离线（PikPak）先验证再接**（10-28 验证通过并接好，见 CLAUDE.md）：用户同意由 Claude 在 Chrome 的 PikPak 网页里加一个测试离线任务（《年会不能停2》磁力），看①几秒内是否完成 ②从云盘下载速度。值得才继续；不值得就停，如实告诉用户「迅雷用户之间传的资源不用迅雷没有可靠免费办法」
   - 已做：App 里 PikPak 客户端（PikPak.swift）、扩展「关联到闪电下载」（已关联成功，网页端 client YUMx5nI8ZU8Ap8pm）、BT 慢 3 分钟自动交云盘、拉回后删云端
   - 卡点：网页端签名常量（peach/AList 的盐和固定时间戳）已失效，`captcha/init` 报 invalid captcha_sign；要从当前网页脚本（mypikpak.com/drive/*.js，搜 YUMx5nI8ZU8Ap8pm / captcha_sign）重新取盐和时间戳；网页端每个 drive 请求都要 X-Captcha-Token
   - 注意：关联时扩展会删掉网页那份登录，但 10-28 用户在 Chrome 里又登录着——两边都刷新会互相作废，接好后要提醒用户

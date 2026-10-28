@@ -26,10 +26,41 @@ actor PikPak {
                 "/750aCr4lm/Sly/c", "RB+DT/gZCrbV", "", "CyLsf7hdkIRxRm215hl", "7xHvLi2tOYP0Y92b",
                 "ZGTXXxu8E/MIWaEDB+Sm/", "1UI3", "E7fP5Pfijd+7K+t6Tg/NhuLq0eEUVChpJSkrKxpO", "ihtqpG6FMt65+Xk+tWUH2",
                 "NhXXU9rg4XXdzo7u5o"],
-        signTimestamp: "1790733736477",
+        signTimestamp: "1793092691562",   // 10-28 从 mypikpak.com/drive 的网页脚本取（模块里 clientId/clientVersion/timestamp/algorithms）
         refreshHeaders: ["X-Client-Id": "YUMx5nI8ZU8Ap8pm", "X-Sdk-Version": "8.1.4", "X-Protocol-Version": "301"])
 
-    private var profile: Profile { session?.clientID == Self.web.clientID ? Self.web : Self.android }
+    private var profile: Profile {
+        guard session?.clientID == Self.web.clientID else { return Self.android }
+        var p = Self.web
+        // 网页改版后自动取到的新签名参数（见 refreshWebSign）
+        if let ts = UserDefaults.standard.string(forKey: "pikpakWebSignTimestamp") { p.signTimestamp = ts }
+        if let salts = UserDefaults.standard.stringArray(forKey: "pikpakWebSignSalts"), salts.count > 5 { p.salts = salts }
+        return p
+    }
+    private var isWeb: Bool { session?.clientID == Self.web.clientID }
+
+    /// 网页端签名失效时（PikPak 改版），从当前网页脚本里重新取时间戳和盐：
+    /// 脚本里有一段 {clientId:"YUMx5nI8ZU8Ap8pm",clientVersion:"2.0.0",packageName:"mypikpak.com",timestamp:"…",algorithms:[{alg:"md5",salt:"…"},…]}
+    private func refreshWebSign() async -> Bool {
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.connectionProxyDictionary = LocalProxy.sessionDictionary(for: "https://mypikpak.com")
+        let session = URLSession(configuration: cfg)
+        guard let (html, _) = try? await session.data(from: URL(string: "https://mypikpak.com/drive/")!),
+              let page = String(data: html, encoding: .utf8) else { return false }
+        let scripts = page.matches(of: /src="(\/drive\/[^"]+\.js)"/).map { String($0.1) }
+        for path in scripts {
+            guard let (d, _) = try? await session.data(from: URL(string: "https://mypikpak.com" + path)!),
+                  let js = String(data: d, encoding: .utf8), let r = js.range(of: "clientId:\"\(Self.web.clientID)\",clientVersion") else { continue }
+            let chunk = String(js[r.lowerBound...].prefix(3000))
+            guard let ts = chunk.firstMatch(of: /timestamp:"(\d+)"/)?.1 else { continue }
+            let salts = chunk.matches(of: /salt:"([^"]*)"/).map { String($0.1) }
+            guard salts.count > 5 else { continue }
+            UserDefaults.standard.set(String(ts), forKey: "pikpakWebSignTimestamp")
+            UserDefaults.standard.set(salts, forKey: "pikpakWebSignSalts")
+            return true
+        }
+        return false
+    }
     private let userHost = "https://user.mypikpak.com"
     private let apiHost = "https://api-drive.mypikpak.com"
 
@@ -38,9 +69,14 @@ actor PikPak {
         var clientID: String?
     }
     private var session: Session?
+    private var signRefreshed = false
     private static var file: URL { EngineConfig.supportDir.appendingPathComponent("pikpak.json") }
 
-    init() { session = (try? Data(contentsOf: Self.file)).flatMap { try? JSONDecoder().decode(Session.self, from: $0) } }
+    init() {
+        session = (try? Data(contentsOf: Self.file)).flatMap { try? JSONDecoder().decode(Session.self, from: $0) }
+        // 早先关联时存的是网页原样的 wdi10.<…>，签名要最后一段的前 32 位
+        if let d = session?.deviceID, d.contains(".") { session?.deviceID = String((d.split(separator: ".").last.map(String.init) ?? d).prefix(32)) }
+    }
 
     /// 已登录的账号名（界面显示用）
     nonisolated static var loggedInUser: String? {
@@ -78,7 +114,9 @@ actor PikPak {
 
     /// 网页登录：在 PikPak 网页里登录后取到的会话（见 PikPakLoginView）。之后只由闪电下载刷新
     func adoptWebSession(clientID: String, deviceID: String, accessToken: String, refreshToken: String, userID: String, name: String) {
-        session = Session(username: name, deviceID: deviceID, accessToken: accessToken, refreshToken: refreshToken,
+        // 网页存的 deviceid 形如 wdi10.<…>，网页签名和请求头用的是最后一段的前 32 位
+        let device = String((deviceID.split(separator: ".").last.map(String.init) ?? deviceID).prefix(32))
+        session = Session(username: name, deviceID: device, accessToken: accessToken, refreshToken: refreshToken,
                           userID: userID, clientID: clientID)
         save()
     }
@@ -178,7 +216,9 @@ actor PikPak {
     private func api(_ method: String, _ url: String, body: [String: Any]?, captchaAction: String? = nil, retried: Bool = false) async throws -> [String: Any] {
         guard let s = session else { throw PikPakError.notLoggedIn }
         var captcha: String?
-        if let a = captchaAction { captcha = try await captchaInit(action: a, meta: nil, device: s.deviceID) }
+        // 网页端每个云盘请求都要验证码令牌（action 是「方法:路径」，不带域名和参数）
+        let action = captchaAction ?? (isWeb ? "\(method):" + (URL(string: url)?.path ?? "") : nil)
+        if let a = action { captcha = try await captchaInit(action: a, meta: nil, device: s.deviceID) }
         let r = try await send(method, url, body: body, device: s.deviceID, auth: true, captcha: captcha)
         if (r["error_code"] as? Int) == 16, !retried {   // 令牌过期
             try await refresh()
@@ -201,8 +241,14 @@ actor PikPak {
         let r = try await send("POST", "\(userHost)/v1/shield/captcha/init",
                                body: ["client_id": p.clientID, "action": action, "device_id": device, "meta": m], device: device, auth: false)
         guard let t = r["captcha_token"] as? String, !t.isEmpty else {
+            // 签名被拒多半是网页改版换了参数：自动重取一次再试
+            if meta == nil, isWeb, (Self.message(r) ?? "").contains("captcha_sign"), !signRefreshed, await refreshWebSign() {
+                signRefreshed = true
+                return try await captchaInit(action: action, meta: nil, device: device)
+            }
             throw PikPakError.server(Self.message(r) ?? "PikPak 要求人机验证，请先在 PikPak 官网或 App 里登录一次再试")
         }
+        signRefreshed = false
         return t
     }
 
