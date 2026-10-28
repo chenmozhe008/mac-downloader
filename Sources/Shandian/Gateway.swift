@@ -145,7 +145,11 @@ final class Gateway: @unchecked Sendable {
             await MainActor.run { NotificationCenter.default.post(name: PikPak.loginChanged, object: nil) }
             return (200, json(["ok": true]))
         }
-        if r.path.hasPrefix("/extension/ping") { return (200, json(["ok": true, "version": BrowserExtension.bundledVersion])) }
+        if r.path.hasPrefix("/extension/ping") {
+            // ready：内核已就绪。扩展拉起 App 后等到它为 true 再交任务，否则会被「下载内核未运行」挡掉
+            let ready = await MainActor.run { store?.engineState == .running }
+            return (200, json(["ok": true, "version": BrowserExtension.bundledVersion, "ready": ready]))
+        }
         guard r.method == "POST", let obj = try? JSONSerialization.jsonObject(with: r.body) as? [String: Any],
               let url = obj["url"] as? String, LinkKind.of(url) != nil else { return (400, json(["ok": false])) }
         let headers = obj["headers"] as? [String: String] ?? [:]

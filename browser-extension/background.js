@@ -90,9 +90,9 @@ async function downloadVideoInTab(tab) {
   } catch (_) {}
   if (picked) {
     const title = (picked.title || "视频").replace(/\s*[-|]\s*(抖音|小红书|哔哩哔哩.*|YouTube)\s*$/, "").trim().slice(0, 80) || "视频";
-    return sendToApp(picked.src, tab.url, title.replace(/[\\/:*?"<>|]/g, " ") + ".mp4");
+    return sendToApp(picked.src, tab.url, title.replace(/[\\/:*?"<>|]/g, " ") + ".mp4", tab.id);
   }
-  return sendToApp(videoPageURL(tab.url), tab.url);   // 页面上找不到能直接下的视频，交页面地址给 yt-dlp
+  return sendToApp(videoPageURL(tab.url), tab.url, undefined, tab.id);   // 页面上找不到能直接下的视频，交页面地址给 yt-dlp
 }
 
 // 抖音网页版看视频时地址常是 ?modal_id=…，换成视频页地址下载工具才认
@@ -103,18 +103,42 @@ function videoPageURL(url) {
   return url;
 }
 
-async function sendToApp(url, referrer, name) {
+async function appReady() {
+  try {
+    const r = await fetch(PING, { method: "POST" });
+    return (await r.json()).ready !== false;
+  } catch (_) {
+    return false;
+  }
+}
+
+// 用户主动点的（面板按钮、右键菜单）App 没开就把它打开：在当前标签页打开 shandian://open，
+// 浏览器会问一次「要打开闪电下载吗」，勾「始终允许」后不再问；然后等内核就绪（最多 20 秒）
+async function launchApp(tabId) {
+  if (await appReady()) return true;
+  try { await chrome.tabs.update(tabId, { url: "shandian://open" }); } catch (_) { return false; }
+  for (let i = 0; i < 40; i++) {
+    await new Promise((r) => setTimeout(r, 500));
+    if (await appReady()) return true;
+  }
+  return false;
+}
+
+// tabId：传了就表示是用户主动点的，App 没开时自动打开它；浏览器自动接管的下载不传，App 没开就让浏览器自己下
+async function sendToApp(url, referrer, name, tabId) {
   const headers = url.startsWith("http") ? await headersFor(url, referrer) : {};
   const cookies = url.startsWith("http") ? await loginCookies(referrer || url) : undefined;
+  const post = () => fetch(APP, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url, headers, cookies, name }),
+  }).then((r) => r.ok);
   try {
-    const r = await fetch(APP, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url, headers, cookies, name }),
-    });
-    return r.ok;
+    return await post();
   } catch (_) {
-    return false; // App 没开
+    // App 没开
+    if (tabId === undefined || !(await launchApp(tabId))) return false;
+    return post().catch(() => false);
   }
 }
 
@@ -136,7 +160,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   // 抖音、小红书的视频是 blob: 地址，下不了，改交页面地址
   let url = info.linkUrl || info.srcUrl;
   if (!url || url.startsWith("blob:")) url = info.pageUrl && videoPageURL(info.pageUrl);
-  if (url) await sendToApp(url, info.pageUrl);
+  if (url) await sendToApp(url, info.pageUrl, undefined, tab?.id);
 });
 
 // 弹出面板发来的请求
