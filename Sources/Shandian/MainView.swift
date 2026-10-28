@@ -66,6 +66,7 @@ private struct Sidebar: View {
         List(selection: $store.section) {
             row(.active, Image(systemName: "arrow.down.circle"))  // 闪电箭头只用在品牌位（App 图标、侧栏顶部、菜单栏），这里和其它行一样用线条图标
             row(.done, Image(systemName: "checkmark.circle"))
+            row(.trash, Image(systemName: "trash"))
             Section("资料库") {
                 ForEach(Category.allCases) { c in row(.category(c), Image(systemName: c.symbol)) }
             }
@@ -154,6 +155,7 @@ private struct Content: View {
             switch store.section {
             case .active: ActivePage(store: store)
             case .done: DonePage(store: store, items: store.doneItems).padding(.top, 8)
+            case .trash: TrashPage(store: store)
             case .category(let c): CategoryPage(store: store, category: c)
             }
         }
@@ -408,7 +410,7 @@ struct TaskRow: View {
             }
             VStack(alignment: .trailing, spacing: 3) {
                 Text(primary).font(.system(size: 15, weight: .medium)).monospacedDigit()
-                if item.slow, !item.link.isEmpty, DownloadStore.hasThunder {
+                if item.slow, !item.link.isEmpty, ThunderBridge.installed {
                     // BT 里几乎没人传：给个直接的出路
                     Button { store.handToThunder(item) } label: {
                         Text("太慢？交给迅雷").font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Theme.tint)
@@ -520,7 +522,8 @@ private struct ItemMenu: View {
                 Button(item.status == .paused ? "继续" : "暂停") { store.togglePause(item) }
             }
             if item.canStream { Button("边下边播") { store.playWhileDownloading(item) } }
-            if item.isActive, !item.link.isEmpty, DownloadStore.hasThunder, item.origin == "磁力" || item.origin == "种子文件" {
+            if case .thunder = item.source, item.isActive { Button("在迅雷中查看") { NSWorkspace.shared.open(ThunderBridge.app) } }
+            if item.isActive, !item.link.isEmpty, ThunderBridge.installed, item.origin == "磁力" || item.origin == "种子文件" {
                 Button("用迅雷下载") { store.handToThunder(item) }
             }
             Divider()
@@ -666,4 +669,61 @@ private struct NewDownloadSheet: View {
         }
     }
     private func folderName(_ k: LinkKind?) -> String { k.map { Folders.displayName(Folders.directory(for: $0)) } ?? "—" }
+}
+
+// MARK: - 回收站
+
+private struct TrashPage: View {
+    @ObservedObject var store: DownloadStore
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("移除的任务保留在这里，可以重新下载或找到文件").font(.system(size: 13)).foregroundStyle(Theme.sub)
+                Spacer()
+                if !store.removedRecords.isEmpty {
+                    Button("清空回收站") { store.clearRecords() }.controlSize(.small)
+                }
+            }
+            .padding(.vertical, 10)
+            if store.removedRecords.isEmpty {
+                Text("回收站是空的").font(.system(size: 14)).foregroundStyle(Theme.sub)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity).padding(.bottom, 80)
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(store.removedRecords) { r in TrashRow(store: store, r: r) }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct TrashRow: View {
+    @ObservedObject var store: DownloadStore
+    let r: DownloadStore.RemovedRecord
+    var body: some View {
+        let exists = r.path.map { FileManager.default.fileExists(atPath: $0) } ?? false
+        HStack(spacing: 14) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(r.title).font(.system(size: 15, weight: .medium)).lineLimit(1).truncationMode(.middle)
+                HStack(spacing: 12) {
+                    Text(r.origin)
+                    if r.size > 0 { Text(r.size.bytesText) }
+                    Text(r.removedAt.formatted(date: .abbreviated, time: .shortened) + " 移除")
+                    Text(r.filesTrashed ? "文件已移到废纸篓" : exists ? "文件还在原位置" : "文件已不在")
+                }
+                .font(.system(size: 13)).foregroundStyle(Theme.sub).lineLimit(1)
+            }
+            Spacer()
+            if exists, let p = r.path {
+                Button("在访达中显示") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: p)]) }.controlSize(.small)
+            }
+            if !r.link.isEmpty { Button("重新下载") { store.redownload(r) }.controlSize(.small) }
+            Button { store.deleteRecord(r) } label: { Image(systemName: "xmark") }
+                .buttonStyle(.plain).foregroundStyle(Theme.sub).help("从回收站删除这条记录")
+        }
+        .padding(.vertical, 12)
+        .overlay(alignment: .top) { Rectangle().fill(Theme.line).frame(height: 0.5) }
+    }
 }

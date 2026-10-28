@@ -6,7 +6,7 @@ import Foundation
 
 /// 界面上的一条下载，内核任务和视频站任务统一成这一种
 struct Item: Identifiable, Equatable {
-    enum Source: Equatable { case engine(String), video(UUID), pending }
+    enum Source: Equatable { case engine(String), video(UUID), pending, thunder(String) }
     enum Status: Equatable { case resolving(Date), running, waiting, paused, done, failed(String) }
 
     var id: String
@@ -36,11 +36,12 @@ struct Item: Identifiable, Equatable {
 }
 
 enum Pane: Hashable {
-    case active, done, category(Category)
+    case active, done, trash, category(Category)
     var title: String {
         switch self {
         case .active: "正在下载"
         case .done: "已完成"
+        case .trash: "回收站"
         case .category(let c): c.rawValue
         }
     }
@@ -112,6 +113,39 @@ final class DownloadStore: ObservableObject {
     private var smoothSpeed: [String: Double] = [:]
     private var autoRetries: [String: (count: Int, at: Date)] = [:]
     private var slowSince: [String: Date] = [:]
+    private var thunderJobs: [ThunderJob] = ThunderBridge.load()
+
+    /// 回收站（参照迅雷）：移除的任务留一条记录，能重新下载、找到文件
+    struct RemovedRecord: Codable, Identifiable, Equatable {
+        var id: String; var title: String; var origin: String; var link: String
+        var path: String?; var size: Int64; var removedAt: Date; var filesTrashed: Bool
+    }
+    @Published private(set) var removedRecords: [RemovedRecord] = DownloadStore.loadRemoved()
+    private static var removedFile: URL { EngineConfig.supportDir.appendingPathComponent("removed.json") }
+    private static func loadRemoved() -> [RemovedRecord] {
+        let dec = JSONDecoder(); dec.dateDecodingStrategy = .iso8601
+        return (try? Data(contentsOf: removedFile)).flatMap { try? dec.decode([RemovedRecord].self, from: $0) } ?? []
+    }
+    private func saveRemoved() {
+        let enc = JSONEncoder(); enc.dateEncodingStrategy = .iso8601
+        if let d = try? enc.encode(removedRecords) { try? d.write(to: Self.removedFile) }
+    }
+    private func recordRemoval(_ item: Item, filesTrashed: Bool) {
+        let link = item.link.isEmpty ? (videoJobs.first { "\($0.id.uuidString)" == item.id }?.url ?? "") : item.link
+        removedRecords.insert(RemovedRecord(id: UUID().uuidString, title: item.title, origin: item.origin, link: link,
+                                            path: (item.location ?? item.file)?.path, size: item.total, removedAt: Date(),
+                                            filesTrashed: filesTrashed), at: 0)
+        if removedRecords.count > 500 { removedRecords.removeLast(removedRecords.count - 500) }
+        saveRemoved()
+    }
+    func redownload(_ r: RemovedRecord) {
+        guard !r.link.isEmpty else { notice = "这条记录没有保存链接，无法重新下载"; return }
+        removedRecords.removeAll { $0.id == r.id }; saveRemoved()
+        request([r.link])
+    }
+    func deleteRecord(_ r: RemovedRecord) { removedRecords.removeAll { $0.id == r.id }; saveRemoved() }
+    func clearRecords() { removedRecords.removeAll(); saveRemoved() }
+    private var autoHanded = Set<String>()
     /// 退出时各 BT 任务已下的量；重启后低于它就是在校验
     private var checkFloor: [String: Int64] = (UserDefaults.standard.dictionary(forKey: "progressAtQuit") as? [String: Int64]) ?? [:]
     private var seenClipboard = Set<String>()
@@ -308,6 +342,10 @@ final class DownloadStore: ObservableObject {
             next[i.id] = smoothSpeed[i.id].map { $0 * 0.8 + Double(i.speed) * 0.2 } ?? Double(i.speed)
         }
         smoothSpeed = next
+        if thunderJobs.contains(where: { !$0.done }) {
+            for k in thunderJobs.indices where !thunderJobs[k].done { ThunderBridge.measure(&thunderJobs[k]) }
+            ThunderBridge.save(thunderJobs)
+        }
         rebuild()
         if firstLoad { engineSeeded = true }
         sleepGuard.update(downloading: items.contains { $0.status == .running })
@@ -318,7 +356,7 @@ final class DownloadStore: ObservableObject {
 
     private func rebuild() {
         let videos = videoJobs.map(Self.item(from:))
-        var all = pending + engineItems + videos
+        var all = pending + engineItems + videos + thunderJobs.map(Self.item(from:))
         all.sort { $0.createdAt > $1.createdAt }
         for k in all.indices {
             all[k].avgSpeed = Int64(smoothSpeed[all[k].id] ?? 0)
@@ -328,12 +366,17 @@ final class DownloadStore: ObservableObject {
             let stuck = isBT && !i.checking && (i.isResolvingState || (i.status == .running && i.avgSpeed < 50 << 10))
             if stuck { slowSince[i.id] = slowSince[i.id] ?? Date() } else { slowSince[i.id] = nil }
             all[k].slow = stuck && Date().timeIntervalSince(slowSince[i.id] ?? Date()) > 180
+            if all[k].slow, Prefs.autoThunder, ThunderBridge.installed, !all[k].link.isEmpty, !autoHanded.contains(i.id) {
+                autoHanded.insert(i.id)
+                let it = all[k]
+                Task { @MainActor in self.handToThunder(it) }
+            }
             if !all[k].isActive, let f = all[k].location ?? all[k].file { all[k].fileGone = Self.isGone(f) }
         }
         // 从未完成变成完成；小文件一个轮询周期就下完，第一次出现就是完成的也算（启动时已有的老任务除外）
         for i in all where i.status == .done && (lastStatus[i.id].map { $0 != .done } ?? engineSeeded) { didFinish(i) }
         for i in all { lastStatus[i.id] = i.status }
-        for i in all where i.category == .movie && (i.origin == "磁力" || i.origin == "种子文件") {
+        for i in all where i.category == .movie && (i.origin == "磁力" || i.origin == "种子文件" || i.origin == "迅雷") {
             thumbs.requestPoster(id: i.id, title: i.title)
         }
         for i in all where i.category == .movie || i.category == .other {
@@ -373,6 +416,7 @@ final class DownloadStore: ObservableObject {
         switch s {
         case .active: items.filter(\.isActive).count
         case .done: items.filter { !$0.isActive }.count
+        case .trash: removedRecords.count
         case .category(let c): items.filter { $0.category == c }.count
         }
     }
@@ -393,6 +437,7 @@ final class DownloadStore: ObservableObject {
         switch section {
         case .active: activeItems
         case .done: doneItems
+        case .trash: []
         case .category(let c): items(in: c).filter(\.isActive) + items(in: c).filter { !$0.isActive }
         }
     }
@@ -401,6 +446,7 @@ final class DownloadStore: ObservableObject {
     func primaryAction(_ item: Item) {
         if item.fileGone { return }
         if !item.isActive { open(item); return }
+        if case .thunder = item.source { NSWorkspace.shared.open(ThunderBridge.app); return }   // 迅雷里的任务到迅雷里管
         if case .failed = item.status { retry(item); return }
         togglePause(item)
     }
@@ -564,6 +610,7 @@ final class DownloadStore: ObservableObject {
     /// 移除任务；moveFiles 为真时把文件移到废纸篓（不直接删除）
     func remove(_ item: Item, moveFiles: Bool) {
         let file = item.location ?? item.file
+        if case .pending = item.source {} else { recordRemoval(item, filesTrashed: moveFiles) }
         switch item.source {
         case .engine(let id):
             Task {
@@ -578,22 +625,47 @@ final class DownloadStore: ObservableObject {
             rebuild()
         case .pending:
             dropPending(item.id); rebuild()
+        case .thunder(let id):
+            // 迅雷那边的任务请在迅雷里管；这里只是不再显示，选了就把文件移到废纸篓
+            if moveFiles, let f = file { Self.trash(f) }
+            forgetThunder(id)
         }
     }
 
     static let thunder = URL(fileURLWithPath: "/Applications/Thunder.app")
     static var hasThunder: Bool { FileManager.default.fileExists(atPath: thunder.path) }
 
-    /// 交给迅雷：迅雷有自己的加速服务器和用户网络，国内热门资源常比 BT 快很多（10-28 实测同一部片迅雷 3–5 MB/s、BT 0）。
-    /// 迅雷会弹出它的新建任务窗口，保存位置预设成这个任务的位置；我们这边的任务暂停，免得两边都下
+    /// 交给迅雷（见 ThunderBridge）：我们这边的任务删掉、已下的一点点移到废纸篓（同名文件会和迅雷打架），
+    /// 换成一条「迅雷」任务，进度从迅雷写的文件里量
     func handToThunder(_ item: Item) {
-        guard Self.hasThunder, !item.link.isEmpty else { return }
-        let dir = (item.location ?? item.file)?.deletingLastPathComponent().path ?? Folders.movies.path
-        UserDefaults(suiteName: "com.xunlei.Thunder")?.set(dir, forKey: "LastSavePath")
-        NSWorkspace.shared.open([URL(string: item.link)!], withApplicationAt: Self.thunder, configuration: NSWorkspace.OpenConfiguration(), completionHandler: nil)
-        if case .engine(let id) = item.source, item.status != .paused { Task { try? await host.client.pause(id) } }
-        if case .pending = item.source { dropPending(item.id); rebuild() }
-        notice = "已交给迅雷，请在迅雷窗口里点「立即下载」"
+        guard ThunderBridge.installed, !item.link.isEmpty else { return }
+        let base = item.location ?? item.file
+        let dir = (item.location != nil && item.location != item.file ? item.location?.deletingLastPathComponent() : item.file?.deletingLastPathComponent())?.path
+            ?? (pendingRecords[item.id]?.dir ?? Folders.movies.path)
+        switch item.source {
+        case .engine(let id):
+            Task {
+                try? await host.client.delete(id, withFiles: false)
+                if let b = base, FileManager.default.fileExists(atPath: b.path) { try? FileManager.default.trashItem(at: b, resultingItemURL: nil) }
+                await poll()
+            }
+        case .pending: dropPending(item.id)
+        default: return
+        }
+        var job = ThunderJob(id: "thunder-" + UUID().uuidString, title: item.title, link: item.link, dir: dir,
+                             hash: ThunderBridge.infoHash(item.link), total: item.total, createdAt: Date())
+        if let b = base, item.location != item.file { job.folder = nil; _ = b }
+        thunderJobs.append(job); ThunderBridge.save(thunderJobs)
+        selectedID = job.id
+        rebuild()
+        ThunderBridge.open(link: item.link, saveDir: dir) { [weak self] clicked in
+            self?.notice = clicked ? "已交给迅雷下载「\(item.title)」，进度显示在这里"
+                                   : "已在迅雷中打开，请在迅雷窗口点「立即下载」（给闪电下载开「辅助功能」权限后可自动点）"
+        }
+    }
+
+    func forgetThunder(_ id: String) {
+        thunderJobs.removeAll { $0.id == id }; ThunderBridge.save(thunderJobs); rebuild()
     }
 
     /// 能边下边播的播放器（能播正在写入的文件）；QuickTime 不行
@@ -741,7 +813,7 @@ final class DownloadStore: ObservableObject {
                 Task { @MainActor in self?.updateVideo(updated) }
             }
         case .engine: togglePause(item)
-        case .pending: break
+        case .pending, .thunder: break
         }
     }
 
@@ -789,6 +861,16 @@ final class DownloadStore: ObservableObject {
                     location: location)
         // 迅雷只认磁力和网页链接；本地种子交给内核时是 data: 地址，交不了
         if lower.hasPrefix("magnet:") || lower.hasPrefix("http") { it.link = url }
+        return it
+    }
+
+    private static func item(from j: ThunderJob) -> Item {
+        let folder = j.folder.map(URL.init(fileURLWithPath:))
+        var it = Item(id: j.id, source: .thunder(j.id), title: j.title, rawTitle: j.title, origin: "迅雷", category: .movie,
+                      status: j.done ? .done : .running, downloaded: j.done ? max(j.bytes, j.total) : j.bytes, total: max(j.total, j.bytes),
+                      speed: j.speed, file: ThunderBridge.mainFile(j), createdAt: j.createdAt, thumbRemote: nil,
+                      linkKey: linkKey(j.link), location: folder)
+        it.link = j.link
         return it
     }
 

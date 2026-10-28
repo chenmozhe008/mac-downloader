@@ -9,6 +9,8 @@ enum Prefs {
     static let preventSleepKey = "preventSleep"
     static let notifyKey = "notifyOnFinish"
     static let downloadLimitKey = "downloadLimit"   // KB/s，0 不限
+    static let autoThunderKey = "autoThunder"
+    static var autoThunder: Bool { UserDefaults.standard.object(forKey: autoThunderKey) as? Bool ?? true }
     static var downloadLimit: Int { UserDefaults.standard.integer(forKey: downloadLimitKey) }
 
     static var maxRunning: Int { let v = UserDefaults.standard.integer(forKey: maxRunningKey); return v > 0 ? v : 5 }
@@ -41,6 +43,7 @@ struct SettingsView: View {
     @AppStorage(Prefs.preventSleepKey) private var preventSleep = true
     @AppStorage(Prefs.notifyKey) private var notify = true
     @AppStorage(Prefs.downloadLimitKey) private var limit = 0
+    @AppStorage(Prefs.autoThunderKey) private var autoThunder = true
     @AppStorage(ClipboardWatcher.enabledKey) private var watchClipboard = true
     @AppStorage(NewTaskPanels.askKey) private var confirmNew = true
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
@@ -67,6 +70,10 @@ struct SettingsView: View {
                     }
                 }
                 .onChange(of: limit) { store.reapplyEngineSettings() }
+                if ThunderBridge.installed {
+                    Toggle("磁力、种子太慢时自动交给迅雷", isOn: $autoThunder)
+                        .help("连续 3 分钟几乎没速度时，用本机的迅雷接着下，进度仍显示在闪电下载里")
+                }
                 Toggle("新建任务时显示确认框", isOn: $confirmNew)
                 Toggle("复制链接后弹出下载提示", isOn: $watchClipboard)
             }
