@@ -70,13 +70,16 @@ final class Thumbnails: ObservableObject {
         guard let api = c.url else { return }
         let out = dir.appendingPathComponent("\(id).poster.jpg")
         Task.detached {
-            struct Hit: Decodable { var img: String?; var type: String?; var year: String? }
+            struct Hit: Decodable { var img: String?; var type: String?; var year: String?; var title: String?; var sub_title: String? }
             var req = URLRequest(url: api, timeoutInterval: 10)
             req.setValue("Mozilla/5.0 (Macintosh)", forHTTPHeaderField: "User-Agent")
             guard let (data, _) = try? await URLSession.shared.data(for: req),
                   let hits = try? JSONDecoder().decode([Hit].self, from: data) else { return }
-            let usable = hits.filter { $0.img != nil && ($0.type == "movie" || $0.type == "tv") }
-            guard let hit = usable.first(where: { year != nil && $0.year == year }) ?? (year == nil ? usable.first : nil),
+            // 宁缺毋滥：标题带年份就按年份对；没年份就要求中文名或英文名完全一致（防止老片配上同名新片的海报）；豆瓣的默认占位图不要
+            let q = query.lowercased()
+            let usable = hits.filter { $0.img != nil && !($0.img ?? "").contains("default") && ($0.type == "movie" || $0.type == "tv") }
+            let named = usable.filter { h in [h.title, h.sub_title].compactMap { $0?.lowercased() }.contains { $0 == q || $0 == "the " + q } }
+            guard let hit = year != nil ? usable.first(where: { $0.year == year }) : (named.count == 1 ? named[0] : nil),   // 同名的不止一部就不猜
                   let src = hit.img?.replacingOccurrences(of: "s_ratio_poster", with: "m_ratio_poster"),
                   let imgURL = URL(string: src) else { return }
             var ir = URLRequest(url: imgURL, timeoutInterval: 15)
