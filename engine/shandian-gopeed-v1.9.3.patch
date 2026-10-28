@@ -37,7 +37,7 @@ index 7b27ae9..0c4c7c8 100644
  	gopkg.in/warnings.v0 v0.1.2 // indirect
  	lukechampine.com/blake3 v1.4.1 // indirect
 diff --git a/internal/protocol/bt/fetcher.go b/internal/protocol/bt/fetcher.go
-index d9202dd..7211497 100644
+index d9202dd..d23b19e 100644
 --- a/internal/protocol/bt/fetcher.go
 +++ b/internal/protocol/bt/fetcher.go
 @@ -15,9 +15,11 @@ import (
@@ -68,7 +68,7 @@ index d9202dd..7211497 100644
  	dnsResolver := &DnsCacheResolver{RefreshTimeout: 5 * time.Minute}
  	cfg.TrackerDialContext = dnsResolver.DialContext
  	client, err = torrent.NewClient(cfg)
-@@ -134,6 +138,51 @@ func (f *Fetcher) Start() (err error) {
+@@ -134,6 +138,81 @@ func (f *Fetcher) Start() (err error) {
  	return
  }
  
@@ -110,6 +110,36 @@ index d9202dd..7211497 100644
 +	return nil
 +}
 +
++// PlayReader 边下边送：最大的那个选中文件的读取器，读到哪儿就优先下哪儿（拖进度条也是），读不到就等
++func (f *Fetcher) PlayReader(ctx context.Context) (io.ReadSeekCloser, string, error) {
++	if !f.torrentReady.Load() {
++		return nil, "", fmt.Errorf("torrent not ready")
++	}
++	files := f.torrent.Files()
++	var target *torrent.File
++	for _, i := range f.meta.Opts.SelectFiles {
++		if i < len(files) && (target == nil || files[i].Length() > target.Length()) {
++			target = files[i]
++		}
++	}
++	if target == nil {
++		return nil, "", fmt.Errorf("no file")
++	}
++	r := target.NewReader()
++	r.SetResponsive()
++	r.SetReadahead(16 << 20)
++	return &ctxReadSeeker{ctx, r}, filepath.Base(target.DisplayPath()), nil
++}
++
++type ctxReadSeeker struct {
++	ctx context.Context
++	r   torrent.Reader
++}
++
++func (c *ctxReadSeeker) Read(p []byte) (int, error)                 { return c.r.ReadContext(c.ctx, p) }
++func (c *ctxReadSeeker) Seek(off int64, whence int) (int64, error) { return c.r.Seek(off, whence) }
++func (c *ctxReadSeeker) Close() error                               { return c.r.Close() }
++
 +type ctxReader struct {
 +	ctx context.Context
 +	r   torrent.Reader
@@ -120,7 +150,7 @@ index d9202dd..7211497 100644
  func (f *Fetcher) Pause() (err error) {
  	f.torrent.DisallowDataDownload()
  	return
-@@ -451,6 +500,10 @@ func (f *Fetcher) addTorrent(req *base.Request, fromUpload bool) (err error) {
+@@ -451,7 +530,19 @@ func (f *Fetcher) addTorrent(req *base.Request, fromUpload bool) (err error) {
  		TorrentDirMaker: func(baseDir string, info *metainfo.Info, infoHash metainfo.Hash) string {
  			return f.meta.Opts.Path
  		},
@@ -129,8 +159,17 @@ index d9202dd..7211497 100644
 +		PieceCompletion: shandian.PieceCompletion(),
 +		UsePartFiles:    g.Some(false),
  	})
++	// 闪电下载：同一个种子之前被「解析」过的话，那个副本还挂在客户端里、存储位置是默认下载目录；
++	// 直接 Add 会复用它，文件写错地方。先拿走它的种子信息（磁力不用重新找元数据），再丢掉副本
++	if old, ok := client.Torrent(spec.InfoHash); ok && old != f.torrent {
++		if old.Info() != nil && len(spec.InfoBytes) == 0 {
++			spec.InfoBytes = old.Metainfo().InfoBytes
++		}
++		old.Drop()
++	}
  	f.torrent, _, err = client.AddTorrentSpec(spec)
  	if err != nil {
+ 		return
 diff --git a/internal/protocol/http/timeout_reader.go b/internal/protocol/http/timeout_reader.go
 index f23e16e..31cac86 100644
 --- a/internal/protocol/http/timeout_reader.go
@@ -154,10 +193,10 @@ index f23e16e..31cac86 100644
  		return 0, ctx.Err()
 diff --git a/internal/shandian/shandian.go b/internal/shandian/shandian.go
 new file mode 100644
-index 0000000..4d83d69
+index 0000000..496faca
 --- /dev/null
 +++ b/internal/shandian/shandian.go
-@@ -0,0 +1,70 @@
+@@ -0,0 +1,78 @@
 +// Package shandian 是闪电下载对 Gopeed v1.9.3 的补丁：
 +//   - BT 块完成记录落盘（原版用 .part 文件时只记内存，内核一重启就整片重新校验）
 +//   - 全局下载限速（BT 和 HTTP 共用一个限速器，配置 extra.shandianDownloadLimit，单位 KB/s，0 为不限）
@@ -165,6 +204,8 @@ index 0000000..4d83d69
 +
 +import (
 +	"context"
++	"crypto/sha256"
++	"encoding/hex"
 +	"os"
 +	"path/filepath"
 +	"sync"
@@ -228,19 +269,27 @@ index 0000000..4d83d69
 +	})
 +	return pc
 +}
++
++// PlayKey 播放地址里的密钥：token 和任务 id 派生，不同任务不同，泄露也拿不到 token
++func PlayKey(token, id string) string {
++	sum := sha256.Sum256([]byte("shandian-play:" + token + ":" + id))
++	return hex.EncodeToString(sum[:])[:24]
++}
 diff --git a/pkg/download/downloader.go b/pkg/download/downloader.go
-index 382a5b7..4dbed0d 100644
+index 382a5b7..adef3cc 100644
 --- a/pkg/download/downloader.go
 +++ b/pkg/download/downloader.go
-@@ -1,6 +1,7 @@
+@@ -1,6 +1,9 @@
  package download
  
  import (
++	"io"
++	"context"
 +	"github.com/GopeedLab/gopeed/internal/shandian"
  	"errors"
  	"fmt"
  	"math"
-@@ -154,6 +155,7 @@ func (d *Downloader) Setup() error {
+@@ -154,6 +157,7 @@ func (d *Downloader) Setup() error {
  	}
  	if exist {
  		d.cfg.DownloaderStoreConfig = &cfg
@@ -248,10 +297,26 @@ index 382a5b7..4dbed0d 100644
  	} else {
  		d.cfg.DownloaderStoreConfig = &base.DownloaderStoreConfig{
  			FirstLoad: true,
-@@ -873,6 +875,19 @@ func (d *Downloader) emit(eventKey EventKey, task *Task, errs ...error) {
+@@ -873,6 +877,35 @@ func (d *Downloader) emit(eventKey EventKey, task *Task, errs ...error) {
  	}
  }
  
++// PlayReader 闪电下载：边下边送的读取器（只对 BT 任务）
++func (d *Downloader) PlayReader(ctx context.Context, id string) (io.ReadSeekCloser, string, time.Time, error) {
++	task := d.GetTask(id)
++	if task == nil {
++		return nil, "", time.Time{}, ErrTaskNotFound
++	}
++	p, ok := task.fetcher.(interface {
++		PlayReader(context.Context) (io.ReadSeekCloser, string, error)
++	})
++	if !ok || task.fetcher == nil {
++		return nil, "", time.Time{}, fmt.Errorf("not supported")
++	}
++	rs, name, err := p.PlayReader(ctx)
++	return rs, name, task.CreatedAt, err
++}
++
 +// Stream 闪电下载：边下边播（只对 BT 任务）
 +func (d *Downloader) Stream(id string) error {
 +	task := d.GetTask(id)
@@ -268,7 +333,7 @@ index 382a5b7..4dbed0d 100644
  func (d *Downloader) GetTask(id string) *Task {
  	d.lock.Lock()
  	defer d.lock.Unlock()
-@@ -951,6 +966,7 @@ func (d *Downloader) GetConfig() (*base.DownloaderStoreConfig, error) {
+@@ -951,6 +984,7 @@ func (d *Downloader) GetConfig() (*base.DownloaderStoreConfig, error) {
  
  func (d *Downloader) PutConfig(v *base.DownloaderStoreConfig) error {
  	d.cfg.DownloaderStoreConfig = v
@@ -277,13 +342,40 @@ index 382a5b7..4dbed0d 100644
  }
  
 diff --git a/pkg/rest/api.go b/pkg/rest/api.go
-index 6c72bfb..3511643 100644
+index 6c72bfb..3797901 100644
 --- a/pkg/rest/api.go
 +++ b/pkg/rest/api.go
-@@ -110,6 +110,16 @@ func PauseTask(w http.ResponseWriter, r *http.Request) {
+@@ -9,6 +9,7 @@ import (
+ 	"github.com/GopeedLab/gopeed/pkg/base"
+ 	"github.com/GopeedLab/gopeed/pkg/download"
+ 	"github.com/GopeedLab/gopeed/pkg/rest/model"
++	"github.com/GopeedLab/gopeed/internal/shandian"
+ 	"github.com/gorilla/mux"
+ )
+ 
+@@ -110,6 +111,35 @@ func PauseTask(w http.ResponseWriter, r *http.Request) {
  	WriteJson(w, model.NewNilResult())
  }
  
++// apiToken 启动时记下，播放地址校验用
++var apiToken string
++
++// PlayTask 闪电下载：边下边送。播放器要哪段就先下哪段再送过去（拖进度条也一样），没下到的地方等到了再返回
++func PlayTask(w http.ResponseWriter, r *http.Request) {
++	vars := mux.Vars(r)
++	if vars["key"] != shandian.PlayKey(apiToken, vars["id"]) {
++		w.WriteHeader(http.StatusForbidden)
++		return
++	}
++	rs, name, modTime, err := Downloader.PlayReader(r.Context(), vars["id"])
++	if err != nil {
++		w.WriteHeader(http.StatusNotFound)
++		return
++	}
++	defer rs.Close()
++	http.ServeContent(w, r, name, modTime, rs)
++}
++
 +// StreamTask 闪电下载：边下边播
 +func StreamTask(w http.ResponseWriter, r *http.Request) {
 +	vars := mux.Vars(r)
@@ -298,14 +390,35 @@ index 6c72bfb..3511643 100644
  	filter, errResult := parseFilter(r)
  	if errResult != nil {
 diff --git a/pkg/rest/server.go b/pkg/rest/server.go
-index a863a90..efbcc7b 100644
+index a863a90..168b13d 100644
 --- a/pkg/rest/server.go
 +++ b/pkg/rest/server.go
-@@ -127,6 +127,7 @@ func BuildServer(startCfg *model.StartConfig) (*http.Server, net.Listener, error
+@@ -127,6 +127,8 @@ func BuildServer(startCfg *model.StartConfig) (*http.Server, net.Listener, error
  	r.Methods(http.MethodPut).Path("/api/v1/tasks/{id}/pause").HandlerFunc(PauseTask)
  	r.Methods(http.MethodPut).Path("/api/v1/tasks/pause").HandlerFunc(PauseTasks)
  	r.Methods(http.MethodPut).Path("/api/v1/tasks/{id}/continue").HandlerFunc(ContinueTask)
 +	r.Methods(http.MethodPut).Path("/api/v1/tasks/{id}/stream").HandlerFunc(StreamTask)
++	r.Methods(http.MethodGet, http.MethodHead).Path("/play/{id}/{key}/{name}").HandlerFunc(PlayTask)
  	r.Methods(http.MethodPut).Path("/api/v1/tasks/continue").HandlerFunc(ContinueTasks)
  	r.Methods(http.MethodDelete).Path("/api/v1/tasks/{id}").HandlerFunc(DeleteTask)
  	r.Methods(http.MethodDelete).Path("/api/v1/tasks").HandlerFunc(DeleteTasks)
+@@ -147,6 +149,7 @@ func BuildServer(startCfg *model.StartConfig) (*http.Server, net.Listener, error
+ 	r.Path("/api/v1/proxy").HandlerFunc(DoProxy)
+ 
+ 	enableApiToken := startCfg.ApiToken != ""
++	apiToken = startCfg.ApiToken // 闪电下载：播放密钥用
+ 	enableWebAuth := startCfg.WebEnable && startCfg.WebAuth != nil
+ 	if startCfg.WebEnable {
+ 		if enableWebAuth {
+@@ -181,6 +184,11 @@ func BuildServer(startCfg *model.StartConfig) (*http.Server, net.Listener, error
+ 
+ 		r.Use(func(h http.Handler) http.Handler {
+ 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++				// 闪电下载：播放地址给播放器用，播放器带不了请求头；用每个任务单独的播放密钥（由 token 派生），不暴露 token
++				if strings.HasPrefix(r.URL.Path, "/play/") {
++					h.ServeHTTP(w, r)
++					return
++				}
+ 				if enableApiToken {
+ 					apiTokenHeader := r.Header["X-Api-Token"]
+ 					// If api token header is set, only check api token ignore basic auth
