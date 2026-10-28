@@ -6,7 +6,19 @@ async function main() {
   const host = tab?.url ? new URL(tab.url).hostname : "";
   const onVideoSite = VIDEO_SITES.some((d) => host === d || host.endsWith("." + d));
   const page = document.getElementById("page");
-  if (!onVideoSite) {
+  if (host === "mypikpak.com") {
+    // PikPak 网页上：把这里登录着的账号关联到闪电下载（云盘离线用）
+    page.querySelector("#title").textContent = "PikPak 云盘";
+    const btn = page.querySelector("#dl");
+    btn.textContent = "关联到闪电下载";
+    page.querySelector("#hint").textContent = "关联后磁力太慢时会自动交给 PikPak 离线下载。这个网页会退出登录（同一份登录不能两边同时用）。";
+    btn.onclick = async () => {
+      btn.disabled = true; btn.textContent = "正在关联…";
+      const r = await chrome.runtime.sendMessage({ type: "linkPikPak", tabId: tab.id });
+      btn.textContent = r?.ok ? "已关联" : "没找到登录信息";
+      if (!r?.ok) page.querySelector("#hint").textContent = "请先在这个网页里登录 PikPak，再点一次。";
+    };
+  } else if (!onVideoSite) {
     page.querySelector("#title").textContent = "当前页面不是视频网站";
     page.querySelector("#dl").style.display = "none";
     page.querySelector("#hint").textContent = "网页上的下载链接会自动交给闪电下载；也可以在链接上右键「用闪电下载」。";

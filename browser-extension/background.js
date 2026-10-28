@@ -133,6 +133,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
     return true; // 异步回复
   }
   if (msg.type === "refreshBadge") refreshBadge();
+  if (msg.type === "linkPikPak") {
+    linkPikPak(msg.tabId).then((ok) => reply({ ok }));
+    return true;
+  }
 });
 
 chrome.runtime.onInstalled.addListener(async () => {
@@ -160,8 +164,17 @@ function grabPikPakSession() {
   return out;
 }
 
+// PikPak 网页一打开会自己跳到 /drive/all，地址里的 #shandian-link 会丢：记住是哪个标签页
+const linkTabs = new Set();
+
 chrome.tabs.onUpdated.addListener(async (tabId, change, tab) => {
-  if (change.status !== "complete" || !tab.url || !tab.url.startsWith("https://mypikpak.com/") || !tab.url.includes("#shandian-link")) return;
+  if ((change.url || tab.url || "").includes("#shandian-link")) linkTabs.add(tabId);
+  if (change.status !== "complete" || !linkTabs.has(tabId) || !tab.url || !tab.url.startsWith("https://mypikpak.com/")) return;
+  linkTabs.delete(tabId);
+  await linkPikPak(tabId);
+});
+
+async function linkPikPak(tabId) {
   for (let i = 0; i < 10; i++) {   // 网页登录信息可能稍后才写好
     const [res] = await chrome.scripting.executeScript({ target: { tabId }, func: grabPikPakSession }).catch(() => [null]);
     const s = res?.result;
@@ -173,9 +186,9 @@ chrome.tabs.onUpdated.addListener(async (tabId, change, tab) => {
         document.title = ok ? "已关联到闪电下载" : "关联失败";
         alert(ok ? "PikPak 已关联到闪电下载，可以关掉这个页面了。" : "没能交给闪电下载，请确认闪电下载已打开。");
       }, args: [ok] });
-      return;
+      return true;
     }
     await new Promise((r) => setTimeout(r, 1000));
   }
-  // 没登录：留在页面上让用户登录，登录后再从闪电下载点一次「从浏览器关联」
-});
+  return false;   // 没登录：留在页面上让用户登录，登录后再点一次关联
+}
