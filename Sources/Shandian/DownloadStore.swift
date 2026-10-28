@@ -412,6 +412,10 @@ final class DownloadStore: ObservableObject {
             }
         }
         for i in all where i.thumbRemote != nil { thumbs.requestRemote(id: i.id, url: i.thumbRemote) }
+        // 视频网站：封面没有或取不到，就从下好的视频里截一帧
+        for i in all where i.category == .video && !i.isActive && (i.thumbRemote == nil || thumbs.remoteFailed.contains(i.id)) {
+            if let f = i.file, FileSelection.videoExt.contains(f.pathExtension.lowercased()) { thumbs.requestFrame(id: i.id, video: f, progress: 1) }
+        }
         if all != items { items = all }
     }
 

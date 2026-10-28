@@ -84,6 +84,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
+    /// 明确同意退出：不写这个时，脚本发来的「退出」（osascript quit）会被 SwiftUI 回成「用户已取消」，菜单退出不受影响（10-28 查到）
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply { .terminateNow }
+
     /// 窗口里任何地方按 ⌘V 都能下载；焦点在输入框（搜索、新建下载）时照常粘贴文字
     func applicationDidFinishLaunching(_ notification: Notification) {
         UNUserNotificationCenter.current().delegate = self

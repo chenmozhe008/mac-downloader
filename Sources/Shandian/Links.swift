@@ -5,7 +5,7 @@ enum LinkKind: Equatable {
     case magnet, torrentFile, ed2k, videoSite, http
 
     static let videoHosts = ["bilibili.com", "b23.tv", "youtube.com", "youtu.be", "douyin.com", "xiaohongshu.com",
-                             "xhslink.com", "kuaishou.com", "weibo.com", "ixigua.com", "vimeo.com", "x.com", "twitter.com"]
+                             "xhslink.com", "kuaishou.com", "weibo.com", "ixigua.com", "vimeo.com", "x.com", "twitter.com", "xinpianchang.com"]
 
     static func of(_ raw: String) -> LinkKind? {
         let s = raw.trimmingCharacters(in: .whitespacesAndNewlines)

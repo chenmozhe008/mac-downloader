@@ -11,6 +11,7 @@ final class Thumbnails: ObservableObject {
     private var posterTried = Set<String>()
     private var attempts: [String: (count: Int, last: Date)] = [:]
     private var inFlight = Set<String>()
+    private(set) var remoteFailed = Set<String>()   // 站点封面取不到的，改从视频里截帧
     private let dir = EngineConfig.supportDir.appendingPathComponent("thumbs")
     static let ffmpeg = ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg"].first { FileManager.default.isExecutableFile(atPath: $0) }
 
@@ -92,7 +93,9 @@ final class Thumbnails: ObservableObject {
     }
 
     func requestRemote(id: String, url: String?) {
-        guard let url, let u = URL(string: url), images[id] == nil, image(for: id) == nil, !inFlight.contains(id) else { return }
+        // 有的站（小红书）给的封面是 http://，系统默认拦不加密的地址，换成 https
+        guard let raw = url, let u = URL(string: raw.hasPrefix("http://") ? "https://" + raw.dropFirst(7) : raw),
+              images[id] == nil, image(for: id) == nil, !inFlight.contains(id), !remoteFailed.contains(id) else { return }
         inFlight.insert(id)
         let out = dir.appendingPathComponent("\(id).jpg")
         Task.detached {
@@ -102,7 +105,10 @@ final class Thumbnails: ObservableObject {
                let jpg = rep.representation(using: .jpeg, properties: [.compressionFactor: 0.8]) {
                 try? jpg.write(to: out); img = src
             }
-            await MainActor.run { self.inFlight.remove(id); if let img { self.images[id] = img } }
+            await MainActor.run {
+                self.inFlight.remove(id)
+                if let img { self.images[id] = img } else { self.remoteFailed.insert(id) }
+            }
         }
     }
 }

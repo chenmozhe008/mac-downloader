@@ -1,5 +1,5 @@
 // 点扩展图标弹出的小面板：视频网站页面上直接「下载这个视频」；下面是接管下载的开关
-const VIDEO_SITES = ["douyin.com", "xiaohongshu.com", "bilibili.com", "youtube.com", "x.com", "twitter.com", "weibo.com", "ixigua.com", "kuaishou.com", "vimeo.com"];
+const VIDEO_SITES = ["douyin.com", "xiaohongshu.com", "bilibili.com", "youtube.com", "x.com", "twitter.com", "weibo.com", "ixigua.com", "kuaishou.com", "vimeo.com", "xinpianchang.com"];
 
 async function main() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });

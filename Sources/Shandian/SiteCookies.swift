@@ -9,6 +9,7 @@ enum SiteCookies {
         guard let host = URL(string: link)?.host?.lowercased() else { return nil }
         if host.hasSuffix("douyin.com") { return "douyin" }
         if host.hasSuffix("xiaohongshu.com") || host.hasSuffix("xhslink.com") { return "xhs" }
+        if host.hasSuffix("xinpianchang.com") { return "xpc" }   // 新片厂有防爬检查，带上浏览器里过了检查的 Cookie
         return nil
     }
 

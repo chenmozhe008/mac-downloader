@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # build_app.sh [run|package] —— 编译、打包成 dist/闪电下载.app（run 时顺便打开）
 set -euo pipefail
-APP_NAME="闪电下载"; EXECUTABLE_NAME="Shandian"; BUNDLE_ID="io.github.chenmozhe008.shandian"; APP_VERSION="0.13.0"
+APP_NAME="闪电下载"; EXECUTABLE_NAME="Shandian"; BUNDLE_ID="io.github.chenmozhe008.shandian"; APP_VERSION="0.13.1"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
 APP="$ROOT/dist/$APP_NAME.app"
 CODESIGN_IDENTITY="${CODESIGN_IDENTITY:-Apple Development}"

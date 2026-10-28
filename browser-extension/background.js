@@ -40,7 +40,7 @@ async function headersFor(url, referrer) {
 }
 
 // 抖音、小红书要登录才能拿到视频：把浏览器里这两家的登录信息一起交给 App（只在用户右键这两家的页面时）
-const LOGIN_SITES = ["douyin.com", "xiaohongshu.com"];
+const LOGIN_SITES = ["douyin.com", "xiaohongshu.com", "xinpianchang.com"];
 
 async function loginCookies(url) {
   const host = new URL(url).hostname;
@@ -66,13 +66,26 @@ function pickPlayingVideo() {
     const src = srcs.find((x) => x && /^https?:/.test(x));
     if (src) return { src, title: document.title };
   }
+  // 小红书：播放器是 blob，但页面数据里有视频直链（不用再等下载工具读 19 秒网页）
+  try {
+    const st = window.__INITIAL_STATE__;
+    const map = st?.note?.noteDetailMap;
+    const id = location.pathname.split("/").pop();
+    const note = (map && (map[id] || Object.values(map)[0]))?.note;
+    const streams = note?.video?.media?.stream;
+    const list = [...(streams?.h264 || []), ...(streams?.h265 || [])];
+    const best = list.sort((a, b) => (b.height || 0) - (a.height || 0))[0];
+    const url = best?.masterUrl || best?.backupUrls?.[0];
+    if (url) return { src: url.replace(/^http:/, "https:"), title: note.title || document.title };
+  } catch (_) {}
   return null;
 }
 
 async function downloadVideoInTab(tab) {
   let picked = null;
   try {
-    const [res] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: pickPlayingVideo });
+    // MAIN：要读页面自己的变量（小红书的 __INITIAL_STATE__）
+    const [res] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: pickPlayingVideo, world: "MAIN" });
     picked = res?.result;
   } catch (_) {}
   if (picked) {
@@ -145,7 +158,7 @@ chrome.runtime.onInstalled.addListener(async () => {
   // 抖音、小红书页面上任何地方右键都有，不用找视频元素
   chrome.contextMenus.create({
     id: "shandian-page", title: "用闪电下载这个视频", contexts: ["page", "frame", "image"],
-    documentUrlPatterns: ["*://*.douyin.com/*", "*://*.xiaohongshu.com/*"],
+    documentUrlPatterns: ["*://*.douyin.com/*", "*://*.xiaohongshu.com/*", "*://*.xinpianchang.com/*"],
   });
   refreshBadge();
   ping();
