@@ -1,13 +1,13 @@
-# 闪电下载（mac-downloader）
+# 闪电全能下载（mac-downloader）
 
-> App 名「闪电下载」（10-27 用户定：先叫这个，后面再改），可执行名 `Shandian`，bundle id `io.github.chenmozhe008.shandian`
+> App 名「闪电全能下载」（10-29 用户定，原名「闪电下载」；卖点是什么都能下，不是比迅雷快），可执行名 `Shandian`，bundle id `io.github.chenmozhe008.shandian`
 
 自用 Mac 下载器，目标是替代迅雷：磁力/BT/ed2k/HTTP + 视频网站 + 网盘直链，一个客户端搞定，浏览器一点就下。
 方案与阶段：`docs/PLAN.md`（P0 规则 → P1 引擎 → P2 界面 → P3 浏览器与网盘 → P4 切换）。
 
 ## 架构（不自己写下载引擎）
 
-- **内核**：Gopeed headless v1.9.3 **打了闪电下载补丁**（`engine/shandian-gopeed-v1.9.3.patch`，`script/build_engine.sh` 编译，产物打进 App、启动时换上），REST API `127.0.0.1:9999`，请求头 `X-Api-Token`；token 由 App 首次运行生成，存 `~/Library/Application Support/ShandianDownload/engine.json`（600 权限，不在仓库里），脚本也读这里
+- **内核**：Gopeed headless v1.9.3 **打了闪电全能下载补丁**（`engine/shandian-gopeed-v1.9.3.patch`，`script/build_engine.sh` 编译，产物打进 App、启动时换上），REST API `127.0.0.1:9999`，请求头 `X-Api-Token`；token 由 App 首次运行生成，存 `~/Library/Application Support/ShandianDownload/engine.json`（600 权限，不在仓库里），脚本也读这里
   - 内核程序和任务库在本机 `Application Support/ShandianDownload/engine/`（10-28 用户同意从移动硬盘挪来；硬盘上的旧副本 `/Volumes/Jack Feng/Applications/MacDownloader/` 没删，等用户定）
   - App 启动时没有就拉起；退出 App 只暂停任务、不关内核
   - 补丁内容：①块完成记录落盘（bolt，`engine/data/piece-completion`）+ 关掉 .part 文件——anacrolix 用 .part 时启动会把没下完文件的块全标未完成，记录等于白存；②全局限速（config.extra.shandianDownloadLimit，KB/s，BT 和直链共用）；③`PUT /tasks/{id}/stream` 顺序下载、`GET /play/{id}/{key}/{名字}` 边下边送（key=sha256("shandian-play:"+token+":"+id) 前 24 位，播放器带不了请求头）；④新建任务前丢掉「解析」留下的同种子副本，否则文件写到默认目录；⑤解析回 403 时带 `Range: bytes=0-` 重试（新片厂 xpccdn）；⑥429/5xx 指数退避（2→30 秒），连续 3 分钟没进展才放弃并报错（原版永不放弃、任务永远「下载中」）；⑦每段至少 20 MB（同 aria2 min-split-size），小文件 1 个连接；⑧`/resolve?probe=1` 只探测、立即关掉（原版解析会把 HTTP 文件整个预下载到 $TMPDIR 且不清，App 不用 rid 等于下两遍）；⑨任务字段 `shandianError` 存失败原因（App `EngineTask.failureText` 翻成人话）。补丁测试 `internal/protocol/http/shandian_test.go`
@@ -24,9 +24,9 @@
 - `127.0.0.1:9999` 内核 REST；`127.0.0.1:6800` App 内置网关（`Gateway.swift`）：`/jsonrpc` 兼容 Aria2 RPC（LinkSwift 推网盘直链），`/api/v1/*` 代理 Gopeed 浏览器扩展（新建任务改走 App 的添加流程：存哪、只选正片、片名整理），密钥都是内核 token
 - `shandian://add?url=<编码后的链接>`（可多个 url）：脚本 / skill 交链接给 App，`open -g` 不抢焦点。**测试别再用 System Events 模拟 ⌘V**（窗口没抢到焦点时按键会落到用户正在用的程序里，10-27 踩过）
 - 迅雷通道（`ThunderBridge.swift`，10-28）：BT 慢 3 分钟自动交给本机迅雷——设迅雷 LastSavePath、用迅雷打开链接、辅助功能 API 点「立即下载」；进度靠迅雷任务文件夹里非隐藏文件的实际占用量，文件夹按 `.<INFOHASH>.js`（迅雷的进度文件）认，`.js` 都没了算下完。**不逆向迅雷协议、不碰会员**（用户多次要求 rev 迅雷，已拒绝：等于白用别人的商业服务）
-- 云盘离线（`PikPak.swift`，10-28 用户不想靠迅雷）：接口照开源 PikPakAPI（登录 captcha_init → signin；离线 POST /drive/v1/files UPLOAD_TYPE_URL；进度 /drive/v1/tasks；下载地址要 captcha 的 GET /drive/v1/files/{id} → web_content_link）。登录用 App 里的网页窗口打开 PikPak 官方登录页（用户 10-28：不要在 App 里输密码），读 localStorage 的 `credentials_<client_id>` 和 `deviceid` 后删掉网页那份，之后只由闪电下载刷新（网页端常量来自开源 peach ADR-0093 / AList，PikPak 改版可能失效）。只存令牌 `pikpak.json`（600）。拉回本地后删云端文件（免费 6 GB）。BT 慢 3 分钟优先云盘、其次（开了的话）迅雷。10-28 实测：国内热门片《年会不能停2》BT 为 0，PikPak 7.9 秒云端完成，拉回约 3 MB/s，自动删云端成功。网页端签名时间戳会随改版变（10-28 为 1793092691562，盐没变），设备号用 deviceid 最后一段前 32 位；签名被拒时 `refreshWebSign` 自动从网页脚本重取。免费约 3 次/天、20 GB/天、6 GB 空间，所以默认手动
+- 云盘离线（`PikPak.swift`，10-28 用户不想靠迅雷）：接口照开源 PikPakAPI（登录 captcha_init → signin；离线 POST /drive/v1/files UPLOAD_TYPE_URL；进度 /drive/v1/tasks；下载地址要 captcha 的 GET /drive/v1/files/{id} → web_content_link）。登录用 App 里的网页窗口打开 PikPak 官方登录页（用户 10-28：不要在 App 里输密码），读 localStorage 的 `credentials_<client_id>` 和 `deviceid` 后删掉网页那份，之后只由闪电全能下载刷新（网页端常量来自开源 peach ADR-0093 / AList，PikPak 改版可能失效）。只存令牌 `pikpak.json`（600）。拉回本地后删云端文件（免费 6 GB）。BT 慢 3 分钟优先云盘、其次（开了的话）迅雷。10-28 实测：国内热门片《年会不能停2》BT 为 0，PikPak 7.9 秒云端完成，拉回约 3 MB/s，自动删云端成功。网页端签名时间戳会随改版变（10-28 为 1793092691562，盐没变），设备号用 deviceid 最后一段前 32 位；签名被拒时 `refreshWebSign` 自动从网页脚本重取。免费约 3 次/天、20 GB/天、6 GB 空间，所以默认手动
 - 回收站：移除任务写 `removed.json`（最多 500 条），可重新下载
-- 磁力默认打开方式已改为闪电下载（10-27 用户同意）；`.torrent` 文件关联未改
+- 磁力默认打开方式已改为闪电全能下载（10-27 用户同意）；`.torrent` 文件关联未改
 - 浏览器扩展：**用自带的**（`browser-extension/`，MV3，Chrome / Edge 通用；10-28 用户说别绑篡改猴）。打包进 App、启动时拷到 `Application Support/ShandianDownload/BrowserExtension`（浏览器记路径，别指向 dist）。用户在扩展页开开发者模式、拖文件夹进去装一次——浏览器不允许第三方静默装扩展，Chrome 137+ 也不认 `--load-extension`
   - 扩展 ID 由 manifest 的 `key` 固定为 `pggchniffhkcgigajlapkboikmgdipel`，网关 `/extension/*` 只认这个 Origin，不用密钥；改 key 要同步改 `Gateway.extensionOrigin`
   - 接管规则：App 接下了才取消浏览器那边的下载；App 没开浏览器照常下（不拉起 App）。图片/文本/网页和已知 <5 MB 的不接（参照 IDM 默认不接图片）。接手后扩展每 5 秒问 `/extension/status` 共 5 分钟，App 那边失败就移除任务、扩展用浏览器重下（不再拦截）。用户主动点的（面板按钮、右键）App 没开就打开 `shandian://open`，等 ping 的 `ready`（内核就绪）再交。网盘直链（LinkSwift）仍需篡改猴，设置页里折叠为可选
@@ -38,14 +38,14 @@
 ## 版本与更新记录（沿用小清）
 
 - 版本号在 `script/build_app.sh` 的 `APP_VERSION`，构建号取 git 提交数。修问题升第三位，加功能升第二位
-- 每次升版本在 `CHANGELOG.md` 顶部加一节；打包时拷进 App，「关于闪电下载 → 更新记录」直接读它，别另写一份。写法按正式更新说明（短句、陈述事实，不写口语）
+- 每次升版本在 `CHANGELOG.md` 顶部加一节；打包时拷进 App，「关于闪电全能下载 → 更新记录」直接读它，别另写一份。写法按正式更新说明（短句、陈述事实，不写口语）
 - 「关于 → 介绍」的优势卡在 `AboutView.swift` 的 `IntroPage`，只写实测过的数据（下面「测速记录」），竞品只写查证过的事实
 
 ## 脚本
 
 - `script/engine.sh start|stop|status|configure`：启停内核；`configure` 写下载设置（每次内核重装/任务库重建后跑一次）
 - `script/dl.sh "<链接或本地.torrent>"`：统一入口，自动分流
-- `script/build_app.sh [run|package]`：编译打包成 `dist/闪电下载.app`（会带上已编好的内核）。**不带参数＝run：会杀掉并重开用户正在用的 App**（App 就从 dist 运行）；只想编译验证用 `package`
+- `script/build_app.sh [run|package]`：编译打包成 `dist/闪电全能下载.app`（会带上已编好的内核）。**不带参数＝run：会杀掉并重开用户正在用的 App**（App 就从 dist 运行）；只想编译验证用 `package`
 - `script/build_engine.sh`：下 Go、拉 Gopeed v1.9.3、打补丁、编译内核
 
 ## 下载设置（`configure` 写入，改值先改这里的说明）
@@ -68,7 +68,7 @@
 
 ## 已知事项
 
-- 抖音、小红书（10-28 用户定的做法）：不在 App 里做登录，用户在浏览器里登录着，扩展右键「用闪电下载这个视频」把页面地址 + 这两家 Cookie 交给网关，存成 `Application Support/ShandianDownload/cookies-<douyin|xhs>.txt`（600）给 yt-dlp `--cookies`（`SiteCookies.swift`）；抖音 `?modal_id=` 地址扩展里换成 `/video/<id>`。**10-28 实测 yt-dlp 抖音带登录 Cookie 也 403**（网页 API 加了签名校验），所以扩展先在页面里找正在播的 `<video>` 真实地址（http 开头）直接交给内核当直链下，带 Referer/UA/Cookie；找不到才退回页面地址给 yt-dlp。**10-28 实测抖音不行**：播放器是 blob（MSE 分段），页面 RENDER_DATA 里也没有 playAddr，用户说抖音先不做；**小红书 10-29 用户实测可下** ✅
+- 抖音、小红书（10-28 用户定的做法）：不在 App 里做登录，用户在浏览器里登录着，扩展右键「用闪电全能下载这个视频」把页面地址 + 这两家 Cookie 交给网关，存成 `Application Support/ShandianDownload/cookies-<douyin|xhs>.txt`（600）给 yt-dlp `--cookies`（`SiteCookies.swift`）；抖音 `?modal_id=` 地址扩展里换成 `/video/<id>`。**10-28 实测 yt-dlp 抖音带登录 Cookie 也 403**（网页 API 加了签名校验），所以扩展先在页面里找正在播的 `<video>` 真实地址（http 开头）直接交给内核当直链下，带 Referer/UA/Cookie；找不到才退回页面地址给 yt-dlp。**10-28 实测抖音不行**：播放器是 blob（MSE 分段），页面 RENDER_DATA 里也没有 playAddr，用户说抖音先不做；**小红书 10-29 用户实测可下** ✅
 - 视频站实测（10-27，最新 yt-dlp）：B 站不登录 1080P ✅、微博 1080P ✅；抖音要「新鲜 cookie」，匿名 ttwid 也 403 ❌；小红书 yt-dlp 自带测试笔记拿不到视频，真实链接走扩展 10-29 用户实测可下 ✅。B 站 1080P+/4K 要登录 cookie
 - lux（iawia002/lux）最后发版 2024-05，抖音/小红书失效、B 站只有 480P，不用
 - Gopeed API 新建任务参数是 `opts`（不是 `opt`），写错不报错、路径静默失效
@@ -76,8 +76,8 @@
 - 上传：内核 `cfg.Seed = true`，上传没被关；《求救信号》上传一直 0 是对方不向我们要数据（迅雷用户为主），同时下的《希望》传了 49 MB。本机路由器 SSDP 发现不到 UPnP 网关（10-28），IPv4 下别人连不进来，要在路由器里开 UPnP；Mac 防火墙已放行 gopeed
 - 原版重启内核会整片重新校验（Gopeed 用 .part 文件 + anacrolix 块记录只在内存），已由内核补丁解决；App 里「正在校验」（`checkFloor`）显示逻辑保留，换内核那次用得上
 - 限速是补丁加的（原版没有）
-- 维基百科原图（upload.wikimedia.org）对代理机房 IP 按频率随机放行（10-28 实测同一请求隔 3 秒约一半 429），浏览器单请求多试一次就过；闪电下载靠补丁⑥⑦（单连接 + 退避）
-- `download-movie` skill 10-28 改成 `dl_shandian.sh` → `shandian://add?confirm=0&url=…`（不弹确认框）；闪电下载不可用时退回迅雷 `dl_fast.sh`
+- 维基百科原图（upload.wikimedia.org）对代理机房 IP 按频率随机放行（10-28 实测同一请求隔 3 秒约一半 429），浏览器单请求多试一次就过；闪电全能下载靠补丁⑥⑦（单连接 + 退避）
+- `download-movie` skill 10-28 改成 `dl_shandian.sh` → `shandian://add?confirm=0&url=…`（不弹确认框）；闪电全能下载不可用时退回迅雷 `dl_fast.sh`
 
 ## 仓库
 

@@ -807,7 +807,7 @@ final class DownloadStore: ObservableObject {
         rebuild()
         ThunderBridge.open(link: item.link, saveDir: dir) { [weak self] clicked in
             self?.notice = clicked ? "已交给迅雷下载「\(item.title)」，进度显示在这里"
-                                   : "已在迅雷中打开，请在迅雷窗口点「立即下载」（给闪电下载开「辅助功能」权限后可自动点）"
+                                   : "已在迅雷中打开，请在迅雷窗口点「立即下载」（给闪电全能下载开「辅助功能」权限后可自动点）"
         }
     }
 
@@ -949,7 +949,7 @@ final class DownloadStore: ObservableObject {
     /// 跟浏览器一样给下载的文件打上「来自互联网」标记（com.apple.quarantine），下来的 App / 安装包打开时照常经过系统安全检查。
     /// 文件夹（BT）里逐个标，.app 只标包本身
     static func markQuarantine(_ url: URL, source: String) {
-        var props: [String: Any] = [kLSQuarantineAgentNameKey as String: "闪电下载",
+        var props: [String: Any] = [kLSQuarantineAgentNameKey as String: "闪电全能下载",
                                     kLSQuarantineTypeKey as String: kLSQuarantineTypeWebDownload as String]
         if source.lowercased().hasPrefix("http"), let u = URL(string: source) { props[kLSQuarantineDataURLKey as String] = u }
         func mark(_ f: URL) {

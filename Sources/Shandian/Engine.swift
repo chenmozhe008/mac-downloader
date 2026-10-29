@@ -171,7 +171,7 @@ final class EngineClient: @unchecked Sendable {
         return URL(string: "/play/\(id)/\(digest.prefix(24))/\(name)", relativeTo: base)?.absoluteURL  // 以 / 开头，落在主机根路径，不在 /api/v1 下
     }
 
-    /// 边下边播（闪电下载给内核加的接口）
+    /// 边下边播（闪电全能下载给内核加的接口）
     func stream(_ id: String) async throws { let _: String? = try await call("PUT", "tasks/\(id)/stream") }
     func pauseAll() async throws { let _: String? = try await call("PUT", "tasks/pause") }
     func resumeAll() async throws { let _: String? = try await call("PUT", "tasks/continue") }
@@ -306,7 +306,7 @@ extension EngineClient {
         guard var cfg = try? await rawConfig() else { return }
         cfg["downloadDir"] = defaultDir
         cfg["maxRunning"] = Prefs.maxRunning
-        // 限速（闪电下载给内核加的，BT 和直链共用），0 为不限
+        // 限速（闪电全能下载给内核加的，BT 和直链共用），0 为不限
         var extra = cfg["extra"] as? [String: Any] ?? [:]
         extra["shandianDownloadLimit"] = Prefs.downloadLimit
         cfg["extra"] = extra

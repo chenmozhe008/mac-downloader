@@ -7,10 +7,10 @@ async function main() {
   const onVideoSite = VIDEO_SITES.some((d) => host === d || host.endsWith("." + d));
   const page = document.getElementById("page");
   if (host === "mypikpak.com") {
-    // PikPak 网页上：把这里登录着的账号关联到闪电下载（云盘离线用）
+    // PikPak 网页上：把这里登录着的账号关联到闪电全能下载（云盘离线用）
     page.querySelector("#title").textContent = "PikPak 云盘";
     const btn = page.querySelector("#dl");
-    btn.textContent = "关联到闪电下载";
+    btn.textContent = "关联到闪电全能下载";
     page.querySelector("#hint").textContent = "关联后磁力太慢时会自动交给 PikPak 离线下载。这个网页会退出登录（同一份登录不能两边同时用）。";
     btn.onclick = async () => {
       btn.disabled = true; btn.textContent = "正在关联…";
@@ -21,15 +21,15 @@ async function main() {
   } else if (!onVideoSite) {
     page.querySelector("#title").textContent = "当前页面不是视频网站";
     page.querySelector("#dl").style.display = "none";
-    page.querySelector("#hint").textContent = "网页上的下载链接会自动交给闪电下载；也可以在链接上右键「用闪电下载」。";
+    page.querySelector("#hint").textContent = "网页上的下载链接会自动交给闪电全能下载；也可以在链接上右键「用闪电全能下载」。";
   } else {
     page.querySelector("#title").textContent = tab.title || tab.url;
     const btn = page.querySelector("#dl");
     btn.onclick = async () => {
-      btn.disabled = true; btn.textContent = "正在交给闪电下载…";
+      btn.disabled = true; btn.textContent = "正在交给闪电全能下载…";
       const r = await chrome.runtime.sendMessage({ type: "downloadPage", tabId: tab.id });
-      btn.textContent = r?.ok ? "已开始下载" : "没能交给闪电下载";
-      page.querySelector("#hint").textContent = r?.ok ? "在闪电下载里能看到进度。" : "浏览器询问是否打开闪电下载时请选择「打开」，然后再试一次。";
+      btn.textContent = r?.ok ? "已开始下载" : "没能交给闪电全能下载";
+      page.querySelector("#hint").textContent = r?.ok ? "在闪电全能下载里能看到进度。" : "浏览器询问是否打开闪电全能下载时请选择「打开」，然后再试一次。";
       if (r?.ok) setTimeout(() => window.close(), 1200);
     };
   }

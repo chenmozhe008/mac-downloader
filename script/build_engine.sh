@@ -1,5 +1,5 @@
 #!/bin/bash
-# 编译打过补丁的 Gopeed 内核（闪电下载用）。补丁：engine/shandian-gopeed-v1.9.3.patch
+# 编译打过补丁的 Gopeed 内核（闪电全能下载用）。补丁：engine/shandian-gopeed-v1.9.3.patch
 #   - BT 块完成记录落盘 + 不用 .part 文件：重启内核不再整片重新校验
 #   - 全局下载限速（BT 和直链共用，配置 extra.shandianDownloadLimit，KB/s）
 #   - PUT /api/v1/tasks/{id}/stream：边下边播（按播放顺序下）

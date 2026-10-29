@@ -1,7 +1,7 @@
 import SwiftUI
 import WebKit
 
-/// 用 PikPak 官方网页登录：密码只在 PikPak 自己的网页里输，闪电下载不经手。
+/// 用 PikPak 官方网页登录：密码只在 PikPak 自己的网页里输，闪电全能下载不经手。
 /// 登录后读网页存的 credentials_<client_id> 和 deviceid，交给 PikPak.adoptWebSession，然后删掉网页里的那份——
 /// 每次刷新会作废旧的 refresh token，同一份会话只能有一个刷新者（做法参照开源项目 peach 的 ADR-0093）
 struct PikPakLoginView: View {

@@ -9,7 +9,7 @@ struct ShandianApp: App {
 
     var body: some Scene {
         // 单个 Window：关掉窗口下载照常进行（菜单栏还在），点 Dock 图标或菜单栏「打开」叫回来
-        Window("闪电下载", id: "main") {
+        Window("闪电全能下载", id: "main") {
             MainView(store: store)
                 .frame(minWidth: 960, minHeight: 620)
                 .onAppear { delegate.store = store }
@@ -44,7 +44,7 @@ struct ShandianApp: App {
         }
         .windowResizability(.contentSize)
 
-        Window("关于闪电下载", id: "about") {
+        Window("关于闪电全能下载", id: "about") {
             AboutView()
         }
         .windowResizability(.contentSize)
@@ -58,7 +58,7 @@ struct ShandianApp: App {
     }
 }
 
-/// 「监听剪贴板」开关（菜单栏「闪电下载」和状态栏菜单里都有）
+/// 「监听剪贴板」开关（菜单栏「闪电全能下载」和状态栏菜单里都有）
 struct ClipboardToggle: View {
     @AppStorage(ClipboardWatcher.enabledKey) private var on = true
     var body: some View { Toggle("复制链接后弹出下载提示", isOn: $on) }
@@ -72,7 +72,7 @@ struct BrowserMenuButton: View {
 private struct AboutMenuButton: View {
     @Environment(\.openWindow) private var openWindow
     var body: some View {
-        Button("关于闪电下载") { AppInfo.showAbout(.intro, openWindow) }
+        Button("关于闪电全能下载") { AppInfo.showAbout(.intro, openWindow) }
         Button("更新记录") { AppInfo.showAbout(.changelog, openWindow) }
     }
 }
@@ -171,7 +171,7 @@ struct MenuBarContent: View {
             Text("\(i.title)　\(Int(i.progress * 100))%")
         }
         Divider()
-        Button("打开闪电下载") { openWindow(id: "main"); NSApp.activate(ignoringOtherApps: true) }
+        Button("打开闪电全能下载") { openWindow(id: "main"); NSApp.activate(ignoringOtherApps: true) }
         Button(store.allPaused ? "全部继续" : "全部暂停") { store.toggleAll() }.disabled(active.isEmpty)
         Divider()
         ClipboardToggle()

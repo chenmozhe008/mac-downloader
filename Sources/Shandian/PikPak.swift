@@ -112,7 +112,7 @@ actor PikPak {
         save()
     }
 
-    /// 网页登录：在 PikPak 网页里登录后取到的会话（见 PikPakLoginView）。之后只由闪电下载刷新
+    /// 网页登录：在 PikPak 网页里登录后取到的会话（见 PikPakLoginView）。之后只由闪电全能下载刷新
     func adoptWebSession(clientID: String, deviceID: String, accessToken: String, refreshToken: String, userID: String, name: String) {
         // 网页存的 deviceid 形如 wdi10.<…>，网页签名和请求头用的是最后一段的前 32 位
         let device = String((deviceID.split(separator: ".").last.map(String.init) ?? deviceID).prefix(32))

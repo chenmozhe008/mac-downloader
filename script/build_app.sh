@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# build_app.sh [run|package] —— 编译、打包成 dist/闪电下载.app（run 时顺便打开）
+# build_app.sh [run|package] —— 编译、打包成 dist/闪电全能下载.app（run 时顺便打开）
 set -euo pipefail
-APP_NAME="闪电下载"; EXECUTABLE_NAME="Shandian"; BUNDLE_ID="io.github.chenmozhe008.shandian"; APP_VERSION="0.15.0"
+APP_NAME="闪电全能下载"; EXECUTABLE_NAME="Shandian"; BUNDLE_ID="io.github.chenmozhe008.shandian"; APP_VERSION="0.15.0"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
 APP="$ROOT/dist/$APP_NAME.app"
 CODESIGN_IDENTITY="${CODESIGN_IDENTITY:-Apple Development}"
@@ -55,7 +55,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleURLTypes</key><array>
     <dict><key>CFBundleURLName</key><string>磁力链接</string><key>CFBundleURLSchemes</key><array><string>magnet</string></array></dict>
     <dict><key>CFBundleURLName</key><string>ed2k 链接</string><key>CFBundleURLSchemes</key><array><string>ed2k</string></array></dict>
-    <dict><key>CFBundleURLName</key><string>闪电下载</string><key>CFBundleURLSchemes</key><array><string>shandian</string></array></dict>
+    <dict><key>CFBundleURLName</key><string>闪电全能下载</string><key>CFBundleURLSchemes</key><array><string>shandian</string></array></dict>
   </array>
   <key>CFBundleDocumentTypes</key><array>
     <dict><key>CFBundleTypeName</key><string>BitTorrent 种子</string><key>CFBundleTypeRole</key><string>Viewer</string>

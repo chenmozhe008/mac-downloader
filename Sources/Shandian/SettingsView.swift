@@ -33,7 +33,7 @@ final class SleepGuard {
         if want, !held {
             held = IOPMAssertionCreateWithName(kIOPMAssertionTypePreventUserIdleSystemSleep as CFString,
                                                IOPMAssertionLevel(kIOPMAssertionLevelOn),
-                                               "闪电下载正在下载" as CFString, &assertion) == kIOReturnSuccess
+                                               "闪电全能下载正在下载" as CFString, &assertion) == kIOReturnSuccess
         } else if !want, held {
             IOPMAssertionRelease(assertion)
             held = false
@@ -80,7 +80,7 @@ struct SettingsView: View {
                 .onChange(of: limit) { store.reapplyEngineSettings() }
                 if ThunderBridge.installed {
                     Toggle("磁力、种子太慢时交给迅雷（没登录云盘时）", isOn: $autoThunder)
-                        .help("连续 3 分钟几乎没速度时，用本机的迅雷接着下，进度仍显示在闪电下载里")
+                        .help("连续 3 分钟几乎没速度时，用本机的迅雷接着下，进度仍显示在闪电全能下载里")
                 }
                 Toggle("新建任务时显示确认框", isOn: $confirmNew)
                 Toggle("复制链接后弹出下载提示", isOn: $watchClipboard)
@@ -97,7 +97,7 @@ struct SettingsView: View {
                 } else {
                     LabeledContent("PikPak 账号") {
                         HStack {
-                            // 浏览器里登录着 PikPak：扩展把登录交给闪电下载，什么都不用输
+                            // 浏览器里登录着 PikPak：扩展把登录交给闪电全能下载，什么都不用输
                             // Chrome、Edge 都打开：哪个里登录着 PikPak 就从哪个关联（默认浏览器不一定是登录的那个）
                             Button("从浏览器关联") {
                                 let u = URL(string: "https://mypikpak.com/drive/#shandian-link")!
@@ -109,7 +109,7 @@ struct SettingsView: View {
                             Button("在窗口里登录…") { openWindow(id: "pikpak-login"); NSApp.activate(ignoringOtherApps: true) }
                         }
                     }
-                    Text("浏览器里已登录 PikPak 时点「从浏览器关联」即可（需装好闪电下载扩展）；关联后浏览器里的 PikPak 网页会退出登录，因为同一份登录不能两边同时用。")
+                    Text("浏览器里已登录 PikPak 时点「从浏览器关联」即可（需装好闪电全能下载扩展）；关联后浏览器里的 PikPak 网页会退出登录，因为同一份登录不能两边同时用。")
                         .font(.system(size: 12)).foregroundStyle(Theme.sub).fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -119,7 +119,7 @@ struct SettingsView: View {
                     .help("只阻止闲置睡眠；合上盖子或手动睡眠照常")
                 Toggle("下载完成时通知", isOn: $notify)
                 Toggle("下载完成时播放提示音", isOn: $doneSound)
-                Toggle("登录时自动打开闪电下载", isOn: $launchAtLogin)
+                Toggle("登录时自动打开闪电全能下载", isOn: $launchAtLogin)
                     .onChange(of: launchAtLogin) { _, on in
                         do { if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() } }
                         catch { launchAtLogin = SMAppService.mainApp.status == .enabled }

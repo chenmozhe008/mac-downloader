@@ -246,7 +246,7 @@ private final class JobState: @unchecked Sendable {
                 job.state = .failed
                 // 抖音、小红书没带登录信息时 yt-dlp 的报错看不懂，直接告诉怎么办
                 job.error = SiteCookies.site(of: job.url) != nil && SiteCookies.ytdlpArguments(for: job.url).isEmpty
-                    ? "需要在浏览器里登录后，右键「用闪电下载这个视频」" : (lastError ?? "下载失败")
+                    ? "需要在浏览器里登录后，右键「用闪电全能下载这个视频」" : (lastError ?? "下载失败")
             }
             if let path = job.filePath, let size = (try? FileManager.default.attributesOfItem(atPath: path))?[.size] as? Int64 {
                 job.total = size; if ok { job.downloaded = size }

@@ -115,7 +115,7 @@ private struct Sidebar: View {
     private var brand: some View {
         HStack(spacing: 9) {
             Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 28, height: 28)
-            Text("闪电下载").font(.system(size: 17, weight: .semibold)).foregroundStyle(Theme.text)
+            Text("闪电全能下载").font(.system(size: 17, weight: .semibold)).foregroundStyle(Theme.text)
             Spacer()
         }
         .padding(.horizontal, 18).padding(.top, 4).padding(.bottom, 6)
@@ -131,7 +131,7 @@ private struct Sidebar: View {
             Button { AppInfo.showAbout(.intro, openWindow) } label: {
                 Label("关于", systemImage: "info.circle").fixedSize()
             }
-            .help("关于闪电下载")
+            .help("关于闪电全能下载")
             Spacer(minLength: 0)
             Button { AppInfo.showAbout(.changelog, openWindow) } label: {
                 Text("v" + AppInfo.version).monospacedDigit().lineLimit(1).fixedSize()

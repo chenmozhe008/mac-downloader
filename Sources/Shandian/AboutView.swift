@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// 「关于闪电下载」：介绍 / 更新记录 / 反馈。结构沿用小清。
+/// 「关于闪电全能下载」：介绍 / 更新记录 / 反馈。结构沿用小清。
 /// 介绍里只写功能事实和本机实测；不写竞品对比数字（单次测试不能当结论，10-27 用户指出）
 enum AppInfo {
     static let author = "@沉默者之二"
@@ -12,7 +12,7 @@ enum AppInfo {
 
     /// 附在反馈邮件里，便于复现
     static var diagnostics: String {
-        "闪电下载 \(version)（\(build)），macOS \(ProcessInfo.processInfo.operatingSystemVersionString)"
+        "闪电全能下载 \(version)（\(build)），macOS \(ProcessInfo.processInfo.operatingSystemVersionString)"
     }
 
     /// 打开「关于」并停在指定页
@@ -26,7 +26,7 @@ enum AppInfo {
         var c = URLComponents()
         c.scheme = "mailto"
         c.path = feedbackEmail
-        c.queryItems = [URLQueryItem(name: "subject", value: "闪电下载反馈 v\(version)"),
+        c.queryItems = [URLQueryItem(name: "subject", value: "闪电全能下载反馈 v\(version)"),
                         URLQueryItem(name: "body", value: "\n\n（请在此描述遇到的问题，并附上截图）\n\(diagnostics)")]
         if let url = c.url { NSWorkspace.shared.open(url) }
     }
@@ -76,7 +76,7 @@ private struct Header: View {
             Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 84, height: 84)
                 .shadow(color: .black.opacity(0.18), radius: 10, y: 5)
             VStack(alignment: .leading, spacing: 5) {
-                Text("闪电下载").font(.system(size: 26, weight: .bold))
+                Text("闪电全能下载").font(.system(size: 26, weight: .bold))
                 Text("磁力、种子、网盘与视频网站，一个窗口下载").font(.system(size: 14, weight: .medium))
                 Text("版本 \(AppInfo.version)（\(AppInfo.build)）　作者 \(AppInfo.author)")
                     .font(.system(size: 12)).opacity(0.75).monospacedDigit().padding(.top, 2)
@@ -141,7 +141,7 @@ private struct IntroPage: View {
     ]
     private let sources = ["磁力", "种子", "ed2k", "HTTP 直链", "网盘直链", "B 站", "YouTube", "X", "微博"]
     private let notes: [(String, String)] = [
-        ("doc.on.clipboard", "复制链接后在窗口中按 ⌘V 即可下载，也可拖入链接或种子文件；装好浏览器扩展后，网页上点下载会直接交给闪电下载。"),
+        ("doc.on.clipboard", "复制链接后在窗口中按 ⌘V 即可下载，也可拖入链接或种子文件；装好浏览器扩展后，网页上点下载会直接交给闪电全能下载。"),
         ("externaldrive", "电影默认存到移动硬盘；硬盘未连接时暂存到「下载 › 电影」。推出硬盘前会自动暂停存在上面的任务。"),
         ("play.tv", "下载中的电影可「边下边播」：先下片头，用 IINA 或 VLC 打开。"),
         ("cloud", "网盘下载需先在浏览器中获取直链，速度受网盘自身限速影响。"),
@@ -152,7 +152,7 @@ private struct IntroPage: View {
         VStack(alignment: .leading, spacing: 24) {
             VStack(alignment: .leading, spacing: 10) {
                 SectionTitle("它是什么")
-                Text("闪电下载是一款 Mac 下载工具。磁力链接、种子文件、ed2k、HTTP 直链、网盘直链，以及 B 站、YouTube 等视频网站的内容，都在同一个窗口下载。链接类型自动识别，文件按类型保存到不同位置；关闭窗口后下载继续，菜单栏显示当前速度。")
+                Text("闪电全能下载是一款 Mac 下载工具。磁力链接、种子文件、ed2k、HTTP 直链、网盘直链，以及 B 站、YouTube 等视频网站的内容，都在同一个窗口下载。链接类型自动识别，文件按类型保存到不同位置；关闭窗口后下载继续，菜单栏显示当前速度。")
                     .font(.system(size: 13.5)).foregroundStyle(Theme.text).lineSpacing(4)
                     .fixedSize(horizontal: false, vertical: true)
             }

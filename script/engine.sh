@@ -11,7 +11,7 @@ api(){ curl -s -H "X-Api-Token: $ENGINE_TOKEN" "$@"; }
 
 case "$1" in
   start)
-    [ -x "$ENGINE_DIR/gopeed" ] || { echo "内核不在：$ENGINE_DIR（先打开一次闪电下载，它会从移动硬盘拷过来）"; exit 1; }
+    [ -x "$ENGINE_DIR/gopeed" ] || { echo "内核不在：$ENGINE_DIR（先打开一次闪电全能下载，它会从移动硬盘拷过来）"; exit 1; }
     if api "$API/info" >/dev/null 2>&1 && api "$API/info" | grep -q '"code":0'; then echo "已在运行"; exit 0; fi
     mkdir -p "$ROOT/logs"
     cd "$ENGINE_DIR" && nohup ./gopeed -A 127.0.0.1 -P $PORT -T "$ENGINE_TOKEN" -d "$ENGINE_DIR/data" \

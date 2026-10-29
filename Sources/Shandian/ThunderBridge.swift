@@ -3,7 +3,7 @@ import AppKit
 
 /// 迅雷通道：国内热门资源常在迅雷用户之间传，BT 网络里几乎没人（10-28 实测同一部片 BT 0、迅雷不开会员 3–5 MB/s）。
 /// 慢了就交给本机装着的迅雷下。不碰迅雷的协议和会员：只像用户一样用迅雷打开链接、点「立即下载」（辅助功能），
-/// 再看它写进硬盘的文件算进度，任务照样显示在闪电下载里。
+/// 再看它写进硬盘的文件算进度，任务照样显示在闪电全能下载里。
 struct ThunderJob: Codable, Identifiable, Equatable {
     var id: String
     var title: String

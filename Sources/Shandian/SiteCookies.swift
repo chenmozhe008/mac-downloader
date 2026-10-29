@@ -18,7 +18,7 @@ enum SiteCookies {
     /// 扩展传来的 Cookie：[{domain, path, secure, expires, name, value}]
     static func save(_ cookies: [[String: Any]], for link: String) {
         guard let site = site(of: link), !cookies.isEmpty else { return }
-        var lines = ["# Netscape HTTP Cookie File", "# 闪电下载：浏览器扩展带来的登录信息，供 yt-dlp 使用"]
+        var lines = ["# Netscape HTTP Cookie File", "# 闪电全能下载：浏览器扩展带来的登录信息，供 yt-dlp 使用"]
         for c in cookies {
             guard let name = c["name"] as? String, let value = c["value"] as? String, var domain = c["domain"] as? String else { continue }
             if !domain.hasPrefix(".") { domain = "." + domain }

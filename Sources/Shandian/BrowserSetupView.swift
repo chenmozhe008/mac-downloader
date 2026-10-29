@@ -52,7 +52,7 @@ struct BrowserSetupView: View {
         VStack(alignment: .leading, spacing: 20) {
             VStack(alignment: .leading, spacing: 6) {
                 Text("浏览器扩展").font(.system(size: 20, weight: .bold))
-                Text("装好后，在浏览器里点下载会直接交给闪电下载；右键链接可选「用闪电下载」。闪电下载没打开时，浏览器照常下载。")
+                Text("装好后，在浏览器里点下载会直接交给闪电全能下载；右键链接可选「用闪电全能下载」。闪电全能下载没打开时，浏览器照常下载。")
                     .font(.system(size: 13)).foregroundStyle(Theme.sub).fixedSize(horizontal: false, vertical: true)
             }
             VStack(spacing: 10) {
@@ -74,7 +74,7 @@ struct BrowserSetupView: View {
             }
             DisclosureGroup(isExpanded: $showPan) {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("百度网盘等需要在网页里先取得直链。可另装篡改猴和 LinkSwift 脚本，把直链推送给闪电下载。")
+                    Text("百度网盘等需要在网页里先取得直链。可另装篡改猴和 LinkSwift 脚本，把直链推送给闪电全能下载。")
                         .font(.system(size: 12.5)).foregroundStyle(Theme.sub).fixedSize(horizontal: false, vertical: true)
                     HStack {
                         Button("篡改猴（Chrome）") { open("https://chromewebstore.google.com/detail/tampermonkey/dhdgffkkebhmkfjojejmpbldmpobfkfo", app: "Google Chrome") }
