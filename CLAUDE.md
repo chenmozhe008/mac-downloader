@@ -1,6 +1,6 @@
 # 闪电全能下载（shandian-download，10-29 由 mac-downloader 改名）
 
-> App 名「闪电全能下载」（10-29 用户定，原名「闪电下载」；卖点是常用渠道都能下 + 快；用户嫌「什么都能下」说得太满，对外别这么写，也别承诺比迅雷会员快），可执行名 `Shandian`，bundle id `io.github.chenmozhe008.shandian`
+> App 名「闪电全能下载」（10-29 用户定，原名「闪电下载」；卖点是常用渠道都能下 + 快；用户嫌「什么都能下」说得太满，对外别这么写）。**对外（README、推广图、文案、文章）不点名迅雷、Downie 等竞品做对比**，只写自己的实测数据（10-29 用户：以免引起商业纠纷），可执行名 `Shandian`，bundle id `io.github.chenmozhe008.shandian`
 
 自用 Mac 下载器，目标是替代迅雷：磁力/BT/ed2k/HTTP + 视频网站 + 网盘直链，一个客户端搞定，浏览器一点就下。
 方案与阶段：`docs/PLAN.md`（P0 规则 → P1 引擎 → P2 界面 → P3 浏览器与网盘 → P4 切换）。
@@ -65,7 +65,7 @@
 
 ## 测速
 
-- 数据和对比脚本在 `docs/internals.md`「测速记录」。对外只用区间（磁力起速 5–18 秒 vs 迅雷非会员 45–64 秒）
+- 数据和对比脚本在 `docs/internals.md`「测速记录」。对外只用区间（磁力起速 5–18 秒），不写竞品数字
 - 「比迅雷会员快」在一种情况做不到：迅雷服务器缓存命中的冷门资源。不要对用户承诺这一项
 
 ## 已知事项（踩坑警示）
@@ -81,7 +81,7 @@
 GitHub **公开**库 `chenmozhe008/shandian-download`（10-28 建，10-29 用户同意公开，分支 master，GPL-3.0——内核基于 Gopeed GPL-3.0，只能用 GPL）。推送仍按全局红线先问用户
 - 发布：`output/release/` 里拷一份 dist 的 App，**`codesign --force --deep --sign -` 改 ad-hoc 签名再打包**（本机用的 Apple Development 证书带用户邮箱，不能外发），`ditto -c -k --keepParent` 打 zip，`gh release create v<版本>`。**附件名用英文 `Shandian-<版本>.zip`**（中文名会被 GitHub 改成 default.zip）。v0.16.0 为首个公开版
 - **install.sh 按附件名 `Shandian-*.zip` 找安装包**：发版改附件名要同步改脚本，否则一行命令安装失效
-- 公开页面别放下载记录截图（有片名）；README 的安装步骤要和 App 里「浏览器扩展」窗口的按钮文字一致；对外数字用测速记录里的区间（磁力起速 5–18 秒 vs 迅雷非会员 45–64 秒），别挑最有利的单值
+- 公开页面别放下载记录截图（有片名）；README 的安装步骤要和 App 里「浏览器扩展」窗口的按钮文字一致；对外数字用测速记录里的区间（磁力起速 5–18 秒），别挑最有利的单值，不带竞品对比
 - 图标 10-29 定稿 J1（`Resources/icon/icon.html`：深橙底 + 原闪电箭头，和闪电说的黄橙区分）；菜单栏 18 点。别再换图形，改前先出方案给用户挑
 - 推广图和文案在 `output/闪电全能下载-推广/`（源文件 `output/promo/`，Chrome 无头渲染 1080×1350 @2x）
 - README 截图（`docs/images/screenshot-*.png`）是仿真图：`output/readme-shots/shot.html?page=active|library`，照 v0.16.0 界面手画、片名只用公版/开源片，Chrome 无头 1000×700 @2x 渲染。界面改版后要同步改这个 HTML 再重渲；README 措辞用产品说明的书面语、数字带测试条件（10-29 用户：「能下什么」这类话不像 App 该说的）。README 标题区（logo 下三行）和 GitHub About 简介 / topics（`gh repo edit`）是同一套说法，加减功能时两处一起改
