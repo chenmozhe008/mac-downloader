@@ -33,7 +33,7 @@
 
 需要 macOS 14 或更新版本，Apple Silicon（M 系列芯片）。
 
-1. 在 [Releases](../../releases) 下载 `闪电全能下载.zip`，解压后把 App 拖进「应用程序」
+1. 在 [Releases](../../releases) 下载 `Shandian-版本号.zip`，解压后把 App 拖进「应用程序」
 2. **第一次打开**：这个 App 没有经过苹果公证，双击时系统会提示「无法验证开发者」。点「完成」，然后打开「系统设置 → 隐私与安全性」，在页面下方点「仍要打开」。以后正常双击即可
 3. **下载视频网站需要 ffmpeg**（合并画面和声音）：装了 [Homebrew](https://brew.sh) 的话，在终端运行 `brew install ffmpeg`
 
