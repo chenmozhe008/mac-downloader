@@ -15,7 +15,7 @@
 
 ![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue)
 ![Platform](https://img.shields.io/badge/macOS-14%2B-black?logo=apple)
-![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-arm64-555)
+![Apple Silicon | Intel](https://img.shields.io/badge/Apple%20Silicon%20%7C%20Intel-arm64%20%7C%20x86__64-555)
 ![SwiftUI](https://img.shields.io/badge/SwiftUI-native-orange?logo=swift)
 
 <img src="docs/images/screenshot-downloading.png" alt="闪电全能下载：正在下载" width="900">
@@ -65,7 +65,7 @@
 ## 系统要求
 
 - macOS 14 或更新版本
-- Apple Silicon（M 系列芯片）
+- Apple 芯片（M 系列）或 Intel 处理器的 Mac，两种芯片分别提供安装包
 - 下载视频平台内容需要 ffmpeg（用于合并音视频，安装方式见下文）
 
 ## 安装
@@ -89,7 +89,7 @@ curl -fsSL https://raw.githubusercontent.com/chenmozhe008/shandian-download/mast
 <details>
 <summary>给 AI 助手的说明</summary>
 
-- 安装脚本 `script/install.sh` 可以重复运行（覆盖旧版，旧版移到废纸篓）；要求 macOS 14+、arm64。加 `-s -- --no-ffmpeg` 可不装 ffmpeg
+- 安装脚本 `script/install.sh` 可以重复运行（覆盖旧版，旧版移到废纸篓）；要求 macOS 14+，按芯片自动选择 AppleSilicon / Intel 安装包。加 `-s -- --no-ffmpeg` 可不装 ffmpeg
 - 浏览器不允许程序自动安装扩展，这一步必须由用户操作：扩展文件夹在 `~/Library/Application Support/ShandianDownload/BrowserExtension`（App 第一次打开时生成）；用 `open -a "Google Chrome" chrome://extensions`（Edge 为 `edge://extensions`）打开扩展管理页，`open "$HOME/Library/Application Support/ShandianDownload"` 显示文件夹，再引导用户打开「开发者模式」、把 `BrowserExtension` 文件夹拖进页面
 - 把链接交给 App 下载：`open -g "shandian://add?url=<URL 编码后的链接>"`（可带多个 url；加 `confirm=0` 不弹确认框）
 
@@ -97,7 +97,7 @@ curl -fsSL https://raw.githubusercontent.com/chenmozhe008/shandian-download/mast
 
 ### 方式三：手动安装
 
-1. 在 [Releases](../../releases) 下载 `Shandian-版本号.zip`，解压后将应用拖入「应用程序」
+1. 在 [Releases](../../releases) 按芯片下载安装包：Apple 芯片（M 系列）选 `Shandian-版本号-AppleSilicon.zip`，Intel 处理器选 `Shandian-版本号-Intel.zip`（不确定时点屏幕左上角苹果菜单 →「关于本机」，看「芯片」或「处理器」一栏）。解压后将应用拖入「应用程序」
 2. 首次打开时，系统会提示「无法验证开发者」（本应用未经过 Apple 公证）。点击「完成」，前往「系统设置 → 隐私与安全性」，在页面下方点击「仍要打开」。此后可正常打开
 3. 如需下载视频平台内容，请安装 ffmpeg：已安装 Homebrew 时，在终端运行 `brew install ffmpeg`
 

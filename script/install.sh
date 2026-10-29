@@ -14,13 +14,17 @@ WITH_FFMPEG=1
 say() { printf '\033[1m%s\033[0m\n' "$*"; }
 
 [[ "$(uname -s)" == "Darwin" ]] || { echo "只支持 macOS"; exit 1; }
-[[ "$(uname -m)" == "arm64" ]] || { echo "只支持 Apple Silicon（M 系列芯片）的 Mac"; exit 1; }
+# M 芯片和 Intel 分开出包；用 hw.optional.arm64 判断（终端在 Rosetta 下运行时 uname -m 也会报 x86_64）
+if [[ "$(sysctl -n hw.optional.arm64 2>/dev/null)" == "1" ]]; then CHIP="AppleSilicon"; CHIP_NAME="Apple 芯片"; else CHIP="Intel"; CHIP_NAME="Intel 处理器"; fi
 MAJOR=$(sw_vers -productVersion | cut -d. -f1)
 (( MAJOR >= 14 )) || { echo "需要 macOS 14 或更新版本"; exit 1; }
 
-say "1/4 查找最新版本"
-URL=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" \
-  | grep -o '"browser_download_url": *"[^"]*Shandian-[^"]*\.zip"' | head -1 | sed 's/.*"\(https[^"]*\)"/\1/')
+say "1/4 查找最新版本（$CHIP_NAME）"
+URLS=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" \
+  | grep -o '"browser_download_url": *"[^"]*Shandian-[^"]*\.zip"' | sed 's/.*"\(https[^"]*\)"/\1/')
+URL=$(echo "$URLS" | grep -- "-$CHIP\.zip" | head -1 || true)
+# 0.16.0 及更早只有一个不带芯片标识的包（仅 Apple 芯片）
+[[ -n "$URL" || "$CHIP" == "Intel" ]] || URL=$(echo "$URLS" | grep -v -- "-Intel\.zip" | head -1 || true)
 [[ -n "$URL" ]] || { echo "没找到安装包，请到 https://github.com/$REPO/releases 手动下载"; exit 1; }
 echo "   $URL"
 

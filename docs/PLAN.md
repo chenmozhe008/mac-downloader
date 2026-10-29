@@ -101,3 +101,11 @@
 - [ ] 新 Mac 首次安装没完整走过（install.sh、首次打开、扩展安装、没有移动硬盘时的默认目录）；有人反馈再修
 - [ ] 首页平台标签顺序要不要和「关于 → 介绍」一致（YouTube、X、B 站……），等用户定
 - [ ] 推荐文案里的「Downie」是按用户口述「刀类」推断的，待用户确认
+
+## Windows 版（2026-10-29 用户定：后续再开，做好后给同事装来测试）
+
+- 选型：Go + Wails（网页做界面，WebView2）。内核同为打补丁的 Gopeed，Windows 版后端也用 Go；同仓库新目录 `windows/`，浏览器扩展原样复用（网关同样开 `127.0.0.1:6800`）
+- 编译和自动化测试放 GitHub Actions 的 Windows 机器；Wails 程序在 Mac 上也能跑，界面和大部分逻辑在本机开发
+- 发版用预发布 `win-v<版本>`，附件 `Shandian-<版本>-Windows-x64.zip`（预发布不算 latest，不影响 Mac 一行命令安装）
+- v0.1 范围：磁力/种子/ed2k/直链、视频站（yt-dlp.exe、ffmpeg 首次使用时自动下载）、浏览器扩展、保存位置/同时下载数/限速、系统代理分流、托盘速度、复制即弹、完成通知、回收站、边下边播、magnet/ed2k/shandian 链接注册（当前用户注册表）。暂不做：PikPak、迅雷通道、代码签名
+- 里程碑：① CI 上 MinGW 编出带 libutp 的 gopeed.exe ② 后端 + Windows 端到端下载测试 ③ 界面对照 Mac 版截图自审 ④ Windows 专属功能 ⑤ 预发布 + `docs/windows-test.md` 同事测试清单（日志在 `%APPDATA%\ShandianDownload\logs`）

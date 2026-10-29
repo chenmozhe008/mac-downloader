@@ -15,7 +15,7 @@ Browser extension · Stream while downloading · Resume after restart · Cloud o
 
 ![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue)
 ![Platform](https://img.shields.io/badge/macOS-14%2B-black?logo=apple)
-![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-arm64-555)
+![Apple Silicon | Intel](https://img.shields.io/badge/Apple%20Silicon%20%7C%20Intel-arm64%20%7C%20x86__64-555)
 ![SwiftUI](https://img.shields.io/badge/SwiftUI-native-orange?logo=swift)
 
 <img src="docs/images/screenshot-downloading.png" alt="Shandian: downloads in progress" width="900">
@@ -67,7 +67,7 @@ Videos are downloaded in the highest available quality, preferring H.264 video a
 ## Requirements
 
 - macOS 14 or later
-- Apple Silicon (M-series chip)
+- Apple silicon (M-series) or Intel Mac — a separate package is provided for each
 - ffmpeg for video platforms (used to merge audio and video; see below)
 
 ## Installation
@@ -84,7 +84,7 @@ The script downloads the latest release into Applications, opens it, and avoids 
 
 ### Option 2: manual install
 
-1. Download `Shandian-<version>.zip` from [Releases](../../releases), unzip it and drag the app into Applications
+1. Download the package for your Mac from [Releases](../../releases): `Shandian-<version>-AppleSilicon.zip` for M-series chips, `Shandian-<version>-Intel.zip` for Intel processors (see Apple menu → About This Mac). Unzip it and drag the app into Applications
 2. On first launch macOS will report that it cannot verify the developer (the app is not notarized). Click Done, open **System Settings → Privacy & Security**, and click **Open Anyway** near the bottom. Subsequent launches work normally
 3. For video platforms, install ffmpeg: `brew install ffmpeg`
 

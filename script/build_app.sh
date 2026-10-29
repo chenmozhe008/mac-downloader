@@ -1,14 +1,18 @@
 #!/usr/bin/env bash
 # build_app.sh [run|package] —— 编译、打包成 dist/闪电全能下载.app（run 时顺便打开）
+# ARCH=arm64|x86_64 指定芯片（默认本机）；本机以外的芯片只打包到 dist/<芯片>/，不会打开
 set -euo pipefail
-APP_NAME="闪电全能下载"; EXECUTABLE_NAME="Shandian"; BUNDLE_ID="io.github.chenmozhe008.shandian"; APP_VERSION="0.16.0"
+APP_NAME="闪电全能下载"; EXECUTABLE_NAME="Shandian"; BUNDLE_ID="io.github.chenmozhe008.shandian"; APP_VERSION="0.17.0"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
-APP="$ROOT/dist/$APP_NAME.app"
+ARCH="${ARCH:-$(uname -m)}"
+case "$ARCH" in arm64) GOARCH=arm64 ;; x86_64) GOARCH=amd64 ;; *) echo "ARCH 只能是 arm64 或 x86_64"; exit 1 ;; esac
+if [[ "$ARCH" == "$(uname -m)" ]]; then APP="$ROOT/dist/$APP_NAME.app"; else APP="$ROOT/dist/$ARCH/$APP_NAME.app"; fi
 CODESIGN_IDENTITY="${CODESIGN_IDENTITY:-Apple Development}"
 security find-identity -v -p codesigning 2>/dev/null | grep -q "$CODESIGN_IDENTITY" || CODESIGN_IDENTITY="-"
 
-swift build -c release
-BIN="$(swift build -c release --show-bin-path)/$EXECUTABLE_NAME"
+TRIPLE="$ARCH-apple-macosx14.0"
+swift build -c release --triple "$TRIPLE"
+BIN="$(swift build -c release --triple "$TRIPLE" --show-bin-path)/$EXECUTABLE_NAME"
 
 # 图标：AppIcon-source.png 更新过才重做 icns
 ICNS="$ROOT/Resources/AppIcon.icns"
@@ -28,7 +32,7 @@ cp "$ROOT/CHANGELOG.md" "$APP/Contents/Resources/CHANGELOG.md"  # 「关于 → 
 cp "$ROOT/Resources/done.wav" "$APP/Contents/Resources/done.wav"  # 下载完成提示音（script/make_done_sound.py 生成）
 cp -R "$ROOT/browser-extension" "$APP/Contents/Resources/BrowserExtension"  # 启动时拷到 Application Support（浏览器认固定路径）
 # 打过补丁的内核（script/build_engine.sh 编出来的）；App 启动时发现和本机装的不一样就换上
-ENGINE_BIN="/Volumes/Jack Feng/Applications/ShandianBuild/gopeed-shandian"
+ENGINE_BIN="/Volumes/Jack Feng/Applications/ShandianBuild/gopeed-shandian-$GOARCH"
 if [ -x "$ENGINE_BIN" ]; then cp "$ENGINE_BIN" "$APP/Contents/Resources/gopeed"; else echo "提醒：没找到内核 $ENGINE_BIN，先跑 script/build_engine.sh" >&2; fi
 mkdir -p "$APP/Contents/Resources/zh-Hans.lproj"  # 声明中文，系统菜单（文件、编辑、窗口）才显示中文
 # 强调色（琥珀）：侧栏选中行、按钮等系统控件跟随它；SwiftPM 不编译 xcassets，这里用 actool 单独编
@@ -68,4 +72,5 @@ PLIST
 codesign --force --sign "$CODESIGN_IDENTITY" --identifier "$BUNDLE_ID" --timestamp=none "$APP"
 codesign --verify --strict "$APP"
 echo "打包完成：$APP"
-if [[ "${1:-run}" == "run" ]]; then pkill -x "$EXECUTABLE_NAME" 2>/dev/null || true; sleep 0.5; open -n "$APP"; fi
+lipo -info "$APP/Contents/MacOS/$EXECUTABLE_NAME" "$APP/Contents/Resources/gopeed"
+if [[ "${1:-run}" == "run" && "$ARCH" == "$(uname -m)" ]]; then pkill -x "$EXECUTABLE_NAME" 2>/dev/null || true; sleep 0.5; open -n "$APP"; fi

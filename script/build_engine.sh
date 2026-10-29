@@ -3,7 +3,7 @@
 #   - BT 块完成记录落盘 + 不用 .part 文件：重启内核不再整片重新校验
 #   - 全局下载限速（BT 和直链共用，配置 extra.shandianDownloadLimit，KB/s）
 #   - PUT /api/v1/tasks/{id}/stream：边下边播（按播放顺序下）
-# Go 工具链和源码放移动硬盘 ShandianBuild/（不装全局），产物 ShandianBuild/gopeed-shandian，build_app.sh 会打进 App
+# Go 工具链和源码放移动硬盘 ShandianBuild/（不装全局），产物 ShandianBuild/gopeed-shandian-arm64 / -amd64，build_app.sh 按芯片打进 App
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 B="/Volumes/Jack Feng/Applications/ShandianBuild"
@@ -24,9 +24,14 @@ cd "$B/gopeed-src"
 # 开了用 libutp。本机命令行工具（CommandLineTools）的链接器和 SDK 版本对不上，改用移动硬盘上 Xcode 的工具链和 SDK
 X="/Volumes/Jack Feng/Applications/Xcode-26.5.0.app/Contents/Developer"
 [ -d "$X" ] || { echo "找不到 Xcode：$X"; exit 1; }
-DEVELOPER_DIR="$X" SDKROOT="$X/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk" CC=clang CXX=clang++ \
-  PATH="$X/Toolchains/XcodeDefault.xctoolchain/usr/bin:$B/go/bin:$PATH" GOPATH="$B/gopath" GOMODCACHE="$B/gopath/pkg/mod" \
-  GOCACHE="$B/gocache" GOTOOLCHAIN=local GOFLAGS=-mod=mod HTTPS_PROXY=$PROXY CGO_ENABLED=1 \
-  go build -tags web -trimpath -ldflags "-s -w" -o "$B/gopeed-shandian" ./cmd/web
-[ "$(strings "$B/gopeed-shandian" | grep -c go-libutp)" -gt 0 ] || { echo "没编进 libutp，检查 CGO"; exit 1; }
-echo "内核：$B/gopeed-shandian"
+# M 芯片和 Intel 各编一份，分别打进两个安装包（合成通用二进制会让内核从 41 MB 翻倍到 85 MB）
+for A in arm64 amd64; do
+  CA=$([ $A = amd64 ] && echo x86_64 || echo arm64)
+  DEVELOPER_DIR="$X" SDKROOT="$X/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk" CC="clang -arch $CA" CXX="clang++ -arch $CA" \
+    PATH="$X/Toolchains/XcodeDefault.xctoolchain/usr/bin:$B/go/bin:$PATH" GOPATH="$B/gopath" GOMODCACHE="$B/gopath/pkg/mod" \
+    GOCACHE="$B/gocache" GOTOOLCHAIN=local GOFLAGS=-mod=mod HTTPS_PROXY=$PROXY CGO_ENABLED=1 GOOS=darwin GOARCH=$A \
+    go build -tags web -trimpath -ldflags "-s -w" -o "$B/gopeed-shandian-$A" ./cmd/web
+  [ "$(strings "$B/gopeed-shandian-$A" | grep -c go-libutp)" -gt 0 ] || { echo "$A 没编进 libutp，检查 CGO"; exit 1; }
+done
+lipo -info "$B/gopeed-shandian-arm64" "$B/gopeed-shandian-amd64"
+echo "内核：$B/gopeed-shandian-arm64、$B/gopeed-shandian-amd64"
