@@ -36,8 +36,11 @@ ENGINE_BIN="/Volumes/Jack Feng/Applications/ShandianBuild/gopeed-shandian-$GOARC
 if [ -x "$ENGINE_BIN" ]; then cp "$ENGINE_BIN" "$APP/Contents/Resources/gopeed"; else echo "提醒：没找到内核 $ENGINE_BIN，先跑 script/build_engine.sh" >&2; fi
 mkdir -p "$APP/Contents/Resources/zh-Hans.lproj"  # 声明中文，系统菜单（文件、编辑、窗口）才显示中文
 # 强调色（琥珀）：侧栏选中行、按钮等系统控件跟随它；SwiftPM 不编译 xcassets，这里用 actool 单独编
+# actool 必须写一份 partial Info.plist，但下面的 Info.plist 是手写的、用不到它：写到系统临时目录，用完删掉
+ASSETS_PLIST="$(mktemp -t shandian-assets).plist"
 xcrun actool "$ROOT/Resources/Assets.xcassets" --compile "$APP/Contents/Resources" --platform macosx \
-  --minimum-deployment-target 14.0 --accent-color AccentColor --output-partial-info-plist "$ROOT/tmp/assets-info.plist" >/dev/null
+  --minimum-deployment-target 14.0 --accent-color AccentColor --output-partial-info-plist "$ASSETS_PLIST" >/dev/null
+rm -f "$ASSETS_PLIST" "${ASSETS_PLIST%.plist}"
 BUILD_NUMBER="$(git rev-list --count HEAD 2>/dev/null || echo 1)"
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
