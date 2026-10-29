@@ -155,7 +155,7 @@ struct MenuBarLabel: View {
         // 图标常在；有速度时跟在图标右边
         let speed = store.totalSpeed
         HStack(spacing: 4) {
-            Image(nsImage: BrandGlyph.image(height: 15))
+            Image(nsImage: BrandGlyph.image(height: 18))  // 15 点太细（10-29 用户：跟闪电说并排显得虚）
             if speed > 0 { Text(speed.speedText).monospacedDigit() }
         }
     }
