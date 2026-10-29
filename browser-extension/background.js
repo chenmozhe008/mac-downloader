@@ -227,10 +227,15 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     await downloadVideoInTab(tab);
     return;
   }
-  // 抖音、小红书的视频是 blob: 地址，下不了，改交页面地址
-  let url = info.linkUrl || info.srcUrl;
-  if (!url || url.startsWith("blob:")) url = info.pageUrl && videoPageURL(info.pageUrl);
-  if (url) await sendToApp(url, info.pageUrl, undefined, tab?.id);
+  // 在视频画面上右键：抖音、小红书的视频是 blob: 地址，抖音的 <video> 即使有地址也不是最高画质。
+  // 这几家和所有 blob 视频都走「取页面里的视频」，不能交页面地址（yt-dlp 下不了抖音；10-29 用户右键视频没下成）
+  const url = info.linkUrl || info.srcUrl;
+  const pageSite = /(^|\.)(douyin|xiaohongshu|xinpianchang)\.com$/.test(new URL(info.pageUrl || tab.url).hostname);
+  if (!url || url.startsWith("blob:") || (info.mediaType === "video" && pageSite)) {
+    await downloadVideoInTab(tab);
+    return;
+  }
+  await sendToApp(url, info.pageUrl, undefined, tab?.id);
 });
 
 // 弹出面板发来的请求
