@@ -17,7 +17,10 @@ struct ShandianApp: App {
         .windowToolbarStyle(.unified)
         .defaultSize(width: 1180, height: 760)
         .commands {
-            CommandGroup(replacing: .appInfo) { AboutMenuButton() }
+            CommandGroup(replacing: .appInfo) {
+                AboutMenuButton()
+                Button("检查更新…") { store.updates.checkFromMenu() }
+            }
             CommandGroup(replacing: .newItem) {
                 Button("新建下载…") { store.showNewSheet = true }.keyboardShortcut("n", modifiers: .command)
             }

@@ -133,12 +133,7 @@ private struct Sidebar: View {
             }
             .help("关于闪电全能下载")
             Spacer(minLength: 0)
-            Button { AppInfo.showAbout(.changelog, openWindow) } label: {
-                Text("v" + AppInfo.version).monospacedDigit().lineLimit(1).fixedSize()
-                    .padding(.horizontal, 7).padding(.vertical, 2)
-                    .background(Capsule().fill(Theme.faint))
-            }
-            .help("查看更新记录")
+            VersionBadge(checker: store.updates) { AppInfo.showAbout(.changelog, openWindow) }
         }
         .labelStyle(.titleAndIcon)
         .buttonStyle(.plain)
@@ -192,6 +187,32 @@ private struct Content: View {
             store.handleKey(press.key) ? .handled : .ignored
         }
         .onChange(of: store.section) { store.selectedID = nil }
+    }
+}
+
+/// 侧栏底部的版本号：平时点开看更新记录；有新版时变成「新版本 X」，点了去下载页（不另占一行）
+private struct VersionBadge: View {
+    @ObservedObject var checker: UpdateChecker
+    let showChangelog: () -> Void
+
+    var body: some View {
+        if let release = checker.available {
+            Button { checker.openDownload() } label: {
+                Label("新版本 \(release.version)", systemImage: "arrow.down.circle.fill")
+                    .monospacedDigit().lineLimit(1).fixedSize()
+                    .foregroundStyle(Theme.tint).font(.system(size: 12.5, weight: .semibold))
+                    .padding(.horizontal, 7).padding(.vertical, 2)
+                    .background(Capsule().fill(Theme.tint.opacity(0.14)))
+            }
+            .help("当前版本 v\(AppInfo.version)。在 GitHub 下载新版本，替换「应用程序」中的闪电全能下载")
+        } else {
+            Button(action: showChangelog) {
+                Text("v" + AppInfo.version).monospacedDigit().lineLimit(1).fixedSize()
+                    .padding(.horizontal, 7).padding(.vertical, 2)
+                    .background(Capsule().fill(Theme.faint))
+            }
+            .help("查看更新记录")
+        }
     }
 }
 

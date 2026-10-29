@@ -124,6 +124,7 @@ struct SettingsView: View {
                         do { if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() } }
                         catch { launchAtLogin = SMAppService.mainApp.status == .enabled }
                     }
+                UpdateToggle(checker: store.updates)
             }
         }
         .formStyle(.grouped)
@@ -149,5 +150,14 @@ struct SettingsView: View {
                 }
             }
         }
+    }
+}
+
+/// 「自动检查更新」：单独观察 UpdateChecker，关掉时侧栏的新版本提示立即消失
+private struct UpdateToggle: View {
+    @ObservedObject var checker: UpdateChecker
+    var body: some View {
+        Toggle("自动检查更新", isOn: $checker.automatic)
+            .help("每天最多访问一次 GitHub 查询最新版本，不上传任何数据")
     }
 }

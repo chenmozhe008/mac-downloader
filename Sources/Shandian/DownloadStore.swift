@@ -257,6 +257,8 @@ final class DownloadStore: ObservableObject {
         return FileManager.default.fileExists(atPath: "/Volumes/" + c[2])
     }
 
+    let updates = UpdateChecker()
+
     init() {
         loadVideos()
         watchVolumes()
@@ -265,6 +267,7 @@ final class DownloadStore: ObservableObject {
         gateway = Gateway(store: self); gateway?.start()
         Task.detached { await YtDlp.ensureFresh() }
         BrowserExtension.install()
+        updates.checkIfDue()
         NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.checkClipboard() }
         }
