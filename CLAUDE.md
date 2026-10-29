@@ -89,6 +89,7 @@ GitHub **公开**库 `chenmozhe008/shandian-download`（10-28 建，10-29 用户
 - 公开页面别放下载记录截图（有片名）；README 的安装步骤要和 App 里「浏览器扩展」窗口的按钮文字一致；对外数字用测速记录里的区间（磁力起速 5–18 秒 vs 迅雷非会员 45–64 秒），别挑最有利的单值
 - 图标 10-29 定稿 J1（`Resources/icon/icon.html`：深橙底 + 原闪电箭头，和闪电说的黄橙区分）；菜单栏 18 点。别再换图形，改前先出方案给用户挑
 - 推广图和文案在 `output/闪电全能下载-推广/`（源文件 `output/promo/`，Chrome 无头渲染 1080×1350 @2x）
+- README 截图（`docs/images/screenshot-*.png`）是仿真图：`output/readme-shots/shot.html?page=active|library`，照 v0.16.0 界面手画、片名只用公版/开源片，Chrome 无头 1000×700 @2x 渲染。界面改版后要同步改这个 HTML 再重渲；README 措辞用产品说明的书面语、数字带测试条件（10-29 用户：「能下什么」这类话不像 App 该说的）
 
 ## 目录
 
