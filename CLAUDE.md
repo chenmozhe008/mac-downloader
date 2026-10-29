@@ -79,7 +79,7 @@
 ## 仓库
 
 GitHub **公开**库 `chenmozhe008/shandian-download`（10-28 建，10-29 用户同意公开，分支 master，GPL-3.0——内核基于 Gopeed GPL-3.0，只能用 GPL）。推送仍按全局红线先问用户
-- 发布：**M 芯片和 Intel 分开出包**（10-29 用户定：通用包内核翻倍，且用户习惯按芯片选）。`script/build_engine.sh` 一次编出 `gopeed-shandian-arm64` / `-amd64`；`ARCH=arm64|x86_64 script/build_app.sh package` 按芯片打包（本机以外的芯片在 `dist/<芯片>/`）。`output/release/` 里拷 App，**`codesign --force --deep --sign -` 改 ad-hoc 签名再打包**（本机用的 Apple Development 证书带用户邮箱，不能外发），`ditto -c -k --keepParent` 打 zip，`gh release create v<版本>`。**附件名 `Shandian-<版本>-AppleSilicon.zip` / `Shandian-<版本>-Intel.zip`**（英文，中文名会被 GitHub 改成 default.zip；以后 Windows 照此加 `-Windows-x64`）。v0.16.0 首个公开版，v0.17.0 起分芯片
+- 发布：**M 芯片和 Intel 分开出包**（10-29 用户定：通用包内核翻倍，且用户习惯按芯片选）。`script/build_engine.sh` 一次编出 `gopeed-shandian-arm64` / `-amd64`；`ARCH=arm64|x86_64 script/build_app.sh package` 按芯片打包（本机以外的芯片在 `dist/<芯片>/`）。`output/release/<版本>/<芯片>/` 里拷 App（`ditto`，Release 说明写在 `output/release/<版本>/notes.md`；旧版本目录发版后移到废纸篓），**`codesign --force --deep --sign -` 改 ad-hoc 签名再打包**（本机用的 Apple Development 证书带用户邮箱，不能外发），`ditto -c -k --keepParent` 打 zip，`gh release create v<版本>`。**附件名 `Shandian-<版本>-AppleSilicon.zip` / `Shandian-<版本>-Intel.zip`**（英文，中文名会被 GitHub 改成 default.zip；以后 Windows 照此加 `-Windows-x64`）。v0.16.0 首个公开版，v0.17.0 起分芯片
 - **install.sh 按附件名后缀 `-AppleSilicon.zip` / `-Intel.zip` 选包**（芯片用 `hw.optional.arm64` 判断，Rosetta 终端下 `uname -m` 不准）：发版改附件名要同步改脚本，否则一行命令安装失效
 - Intel 版是尽力支持：发版前用 Rosetta 跑 Intel 内核实测（另开端口 9998、BT 6882，下一个公开文件 + Sintel 磁力）。本机升到 macOS 27 后没有 Rosetta，就只能编译不能实测，届时跟用户商量是否停掉 Intel 版
 - 公开页面别放下载记录截图（有片名）；README 的安装步骤要和 App 里「浏览器扩展」窗口的按钮文字一致；对外数字用测速记录里的区间（磁力起速 5–18 秒），别挑最有利的单值，不带竞品对比
