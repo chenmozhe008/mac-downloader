@@ -43,16 +43,43 @@ struct MainView: View {
             return true
         }
         .sheet(isPresented: $store.showNewSheet) { NewDownloadSheet(store: store) }
-        // 移除一律先确认，默认只移除任务、文件保留
-        .alert(store.removalTarget.map { "移除「\($0.title)」？" } ?? "",
-               isPresented: Binding(get: { store.removalTarget != nil }, set: { if !$0 { store.removalTarget = nil } }),
-               presenting: store.removalTarget) { item in
-            Button("移除任务") { store.remove(item, moveFiles: false) }
-            Button("移除并将文件移到废纸篓", role: .destructive) { store.remove(item, moveFiles: true) }
-            Button("取消", role: .cancel) {}
-        } message: { item in
-            Text(item.isActive ? "下载将停止。选择「移除任务」时，已下载的部分保留在原位置。" : "选择「移除任务」时，文件保留在原位置。")
+        // 移除一律先确认：一个「移除」按钮 + 「同时将文件移到废纸篓」勾选框（同迅雷、qBittorrent），记住上次的选择
+        .onChange(of: store.removalTarget?.id) {
+            guard let item = store.removalTarget else { return }
+            RemovalConfirm.present(item, store: store)
         }
+    }
+}
+
+@MainActor
+enum RemovalConfirm {
+    private static let key = "removeAlsoTrashesFiles"
+
+    static func present(_ item: Item, store: DownloadStore) {
+        let hasFiles: Bool = {
+            if case .pending = item.source { return false }
+            guard !item.fileGone, let f = item.location ?? item.file else { return false }
+            return FileManager.default.fileExists(atPath: f.path)
+        }()
+        let alert = NSAlert()
+        alert.messageText = "移除「\(item.title)」？"
+        alert.informativeText = item.isActive ? "下载将停止。" : hasFiles ? "任务移到回收站，可以重新下载。" : "文件已不在原位置，只移除任务。"
+        alert.addButton(withTitle: "移除")
+        alert.addButton(withTitle: "取消")
+        if hasFiles {
+            alert.showsSuppressionButton = true
+            alert.suppressionButton?.title = item.isActive ? "同时将已下载的部分移到废纸篓" : "同时将文件移到废纸篓"
+            alert.suppressionButton?.state = UserDefaults.standard.bool(forKey: key) ? .on : .off
+        }
+        let finish: (NSApplication.ModalResponse) -> Void = { r in
+            store.removalTarget = nil
+            guard r == .alertFirstButtonReturn else { return }
+            let trash = hasFiles && alert.suppressionButton?.state == .on
+            if hasFiles { UserDefaults.standard.set(trash, forKey: key) }
+            store.remove(item, moveFiles: trash)
+        }
+        if let w = NSApp.keyWindow ?? NSApp.mainWindow { alert.beginSheetModal(for: w, completionHandler: finish) }
+        else { finish(alert.runModal()) }
     }
 }
 
@@ -340,11 +367,6 @@ private struct EmptyState: View {
                 shape.fill(RadialGradient(colors: [Theme.tint.opacity(0.12), Theme.tint.opacity(0.02)], center: .top, startRadius: 0, endRadius: 420))
             )
             .overlay(shape.strokeBorder(Theme.tint.opacity(0.35), style: StrokeStyle(lineWidth: 1.2, dash: [7, 6])))
-            let done = store.items.filter { !$0.isActive }
-            if !done.isEmpty {
-                Text("已完成 \(done.count) 项，共 \(done.reduce(Int64(0)) { $0 + $1.total }.bytesText)")
-                    .font(.system(size: 13)).foregroundStyle(Theme.sub).monospacedDigit()
-            }
         }
         .frame(maxWidth: 760)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -405,7 +427,9 @@ struct TaskRow: View {
                     if case .failed(let m) = item.status { Text(m).foregroundStyle(Theme.failed) }
                 }
                 .font(.system(size: 13)).foregroundStyle(Theme.sub).lineLimit(1)
-                ProgressBar(value: item.progress, dim: item.status == .paused || item.isResolving || item.checking)
+                ProgressBar(value: item.progress, dim: item.status == .paused || item.isResolving || item.checking,
+                            busy: item.videoStage == .preparing,
+                            finishing: item.videoStage == .merging || item.videoStage == .converting)
                     .padding(.top, 7)
             }
             VStack(alignment: .trailing, spacing: 3) {
@@ -463,7 +487,10 @@ struct TaskRow: View {
     }
     private var primary: String {
         switch item.status {
-        case .running: item.checking ? "正在校验" : item.speed.speedText
+        case .running where item.videoStage == .preparing: "正在解析"
+        case .running where item.videoStage == .merging: "正在合并"
+        case .running where item.videoStage == .converting: "正在转换"
+        case .running: item.checking ? "正在校验" : item.avgSpeed.speedText
         case .paused: "已暂停"
         case .waiting: "排队中"
         case .resolving: "正在解析"
@@ -476,6 +503,10 @@ struct TaskRow: View {
         case .running where item.cloudProgress != nil: "云端下载中 \(item.cloudProgress ?? 0)%"
         case .running where store.buffering.contains(item.id): "正在打开播放器"
         case .running where item.checking: "核对已下载的部分"
+        case .running where item.videoStage == .preparing: ""   // 标题已写「正在读取视频信息」
+        case .running where item.videoStage == .merging: "合并视频和音频"
+        case .running where item.videoStage == .converting: "转换为 M4A"
+        case .running where item.videoStage == .audio && item.avgSpeed == 0: "正在下载音频"
         case .running: item.avgSpeed > 0 ? remainingText(Double(item.total - item.downloaded) / Double(item.avgSpeed)) : "正在连接"
         case .resolving(let since):
             Date().timeIntervalSince(since) > 180 ? "资源较冷门，仍在尝试" : "正在寻找资源"
@@ -498,15 +529,30 @@ private extension Item {
 private struct ProgressBar: View {
     let value: Double
     let dim: Bool
+    var busy = false       // 还没有字节进度（解析中）：一段亮条来回走，告诉用户还在干活
+    var finishing = false  // 下完在合并：进度条满格、轻轻呼吸；不用来回走的亮条，那样看着像在往回倒（10-29 用户反馈）
     var body: some View {
         GeometryReader { g in
             ZStack(alignment: .leading) {
                 Capsule().fill(Theme.track)
+                if busy {
+                    TimelineView(.animation) { t in
+                        let phase = (sin(t.date.timeIntervalSinceReferenceDate * 2.2) + 1) / 2
+                        let w = g.size.width * 0.28
+                        Capsule().fill(Theme.tint.opacity(0.75)).frame(width: w).offset(x: (g.size.width - w) * phase)
+                    }
+                } else if finishing {
+                    TimelineView(.animation) { t in
+                        let phase = (sin(t.date.timeIntervalSinceReferenceDate * 3) + 1) / 2
+                        Capsule().fill(Theme.tint).opacity(0.55 + 0.45 * phase)
+                    }
+                } else {
                 Capsule()
                     .fill(dim ? AnyShapeStyle(Theme.sub) : AnyShapeStyle(LinearGradient(colors: [Theme.tint.opacity(0.65), Theme.tint], startPoint: .leading, endPoint: .trailing)))
                     .frame(width: max(0, g.size.width * value))
                     .shadow(color: dim ? .clear : Theme.tint.opacity(0.45), radius: 4)
                     .animation(.easeOut(duration: 0.6), value: value)
+                }
             }
         }
         .frame(height: 5)
@@ -682,16 +728,33 @@ private struct NewDownloadSheet: View {
 
 private struct TrashPage: View {
     @ObservedObject var store: DownloadStore
+    @State private var confirmClear = false
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Text("移除的任务保留在这里，可以重新下载或找到文件").font(.system(size: 13)).foregroundStyle(Theme.sub)
+                Text("移除的任务保留在这里，可以重新下载或找到文件").font(.system(size: 14)).foregroundStyle(Theme.sub)
                 Spacer()
                 if !store.removedRecords.isEmpty {
-                    Button("清空回收站") { store.clearRecords() }.controlSize(.small)
+                    // 系统按钮的浅灰底在暖色背景上看不出来（10-29 用户反馈）：浅红底 + 红字，一眼看出是删除类操作
+                    Button { confirmClear = true } label: {
+                        Label("清空回收站", systemImage: "trash")
+                            .font(.system(size: 13.5, weight: .semibold))
+                            .foregroundStyle(Theme.failed)
+                            .padding(.horizontal, 14).padding(.vertical, 7)
+                            .background(Capsule().fill(Theme.failed.opacity(0.12)))
+                            .overlay(Capsule().strokeBorder(Theme.failed.opacity(0.3), lineWidth: 0.8))
+                            .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
                 }
             }
-            .padding(.vertical, 10)
+            .padding(.vertical, 12)
+            .alert("清空回收站？", isPresented: $confirmClear) {
+                Button("清空", role: .destructive) { store.clearRecords() }
+                Button("取消", role: .cancel) {}
+            } message: {
+                Text("\(store.removedRecords.count) 条记录将被删除，之后不能再从这里重新下载。已下载的文件不受影响。")
+            }
             if store.removedRecords.isEmpty {
                 Text("回收站是空的").font(.system(size: 14)).foregroundStyle(Theme.sub)
                     .frame(maxWidth: .infinity, maxHeight: .infinity).padding(.bottom, 80)
@@ -723,12 +786,20 @@ private struct TrashRow: View {
                 .font(.system(size: 13)).foregroundStyle(Theme.sub).lineLimit(1)
             }
             Spacer()
-            if exists, let p = r.path {
-                Button("在访达中显示") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: p)]) }.controlSize(.small)
+            // 和下载列表同一套圆形按钮，悬停显示说明
+            HStack(spacing: 6) {
+                if !r.link.isEmpty { CircleIconButton(symbol: "arrow.clockwise", help: "重新下载") { store.redownload(r) } }
+                if exists, let p = r.path {
+                    CircleIconButton(symbol: "folder", help: "在访达中显示") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: p)]) }
+                }
+                CircleIconButton(symbol: "xmark", help: "从回收站删除这条记录") { store.deleteRecord(r) }
             }
-            if !r.link.isEmpty { Button("重新下载") { store.redownload(r) }.controlSize(.small) }
-            Button { store.deleteRecord(r) } label: { Image(systemName: "xmark") }
-                .buttonStyle(.plain).foregroundStyle(Theme.sub).help("从回收站删除这条记录")
+        }
+        .contextMenu {
+            if !r.link.isEmpty { Button("重新下载") { store.redownload(r) } }
+            if exists, let p = r.path { Button("在访达中显示") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: p)]) } }
+            Divider()
+            Button("从回收站删除") { store.deleteRecord(r) }
         }
         .padding(.vertical, 12)
         .overlay(alignment: .top) { Rectangle().fill(Theme.line).frame(height: 0.5) }

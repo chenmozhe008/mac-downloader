@@ -14,7 +14,7 @@
   - Go 工具链、Gopeed 源码、编译缓存都在移动硬盘 `Applications/ShandianBuild/`（不装全局）；**必须开 CGO**（不开 anacrolix 用纯 Go uTP，10-28 实测只剩 1 个连接）；本机命令行工具的链接器和 SDK 对不上，`build_engine.sh` 用移动硬盘上 Xcode-26.5 的工具链
   - 推出移动硬盘：DiskArbitration 推出审批回调里查内核是否开着那块盘上的文件（`EngineHost.holdsFiles`），开着就暂停→结束内核→批准→2 秒后重启，插回自动续
   - 只监听 127.0.0.1，不开 0.0.0.0
-- **视频网站**：yt-dlp + ffmpeg，境外站走代理 7897，B 站/微博等国内站直连。**yt-dlp 用 App 自带的**（`Application Support/ShandianDownload/bin/yt-dlp`，首次启动下载官方 `yt-dlp_macos`、每 7 天 `-U`），brew 里的只做兜底——视频站改版快，10-27 实测 brew 的 2025-04 版下 B 站 412
+- **视频网站**：yt-dlp + ffmpeg，境外站走代理 7897，B 站/微博等国内站直连。**yt-dlp 用 App 自带的目录版**（`Application Support/ShandianDownload/bin/yt-dlp_macos/`，官方 `yt-dlp_macos.zip`；10-29 实测单文件版每次启动解包＋系统扫描白等 16 秒，目录版 0.3 秒。目录版不能 `-U`，每 7 天查 GitHub 最新 tag，不同就重下）。**参数带了 `--print` 必须同时带 `--progress`**，否则安静模式不出进度（10-29 用户：一直 0 突然下好）；速度用最近 3 秒字节自己算，yt-dlp 报的瞬时值开头能到 200 MB/s，brew 里的只做兜底——视频站改版快，10-27 实测 brew 的 2025-04 版下 B 站 412
   - 选格式 `-S res,vcodec:h264,acodec:aac`：默认会挑体积最小的 AV1（实测拿到 480P AV1），剪辑软件兼容差
 - **网盘**：浏览器里的 LinkSwift 油猴脚本拿直链 → 交给内核。**只装 Greasy Fork 上 hmjz100 的版本**；GitHub `Mario82del/LinkSwift` 发安装包，疑似冒名，别碰
 - 客户端界面（P2）：原生 SwiftUI，`NavigationSplitView` 系统侧栏 + 系统工具栏/搜索框（10-27 用户嫌手搓侧栏和红绿灯对不齐，别再手工画侧栏）；侧栏顶部 App 图标+名字，技术约定沿用小清（`Coding Project/mac-cleanup-manager/CLAUDE.md`）：本机 SwiftUI 宏编译不过，状态放 `ObservableObject @Published`；文案像专业 Mac 软件

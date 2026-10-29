@@ -30,6 +30,7 @@ struct Item: Identifiable, Equatable {
     var checking = false        // 重启后内核在校验已下载部分：进度从 0 涨回去，那段「速度」是读本地硬盘，不算下载
     var fileGone = false        // 下完后文件被用户在访达里删了或移走（硬盘没插不算）
     var avgSpeed: Int64 = 0     // 平滑后的速度，算剩余时间用；瞬时速度跳得厉害，行内和顶部估算会对不上
+    var videoStage: VideoJob.Stage?  // 视频站任务下载中处在哪一步
 
     var progress: Double { total > 0 ? min(1, Double(downloaded) / Double(total)) : 0 }
     var isResolvingState: Bool { if case .resolving = status { return true }; return false }
@@ -371,8 +372,7 @@ final class DownloadStore: ObservableObject {
         if firstLoad { engineSeeded = true }
         sleepGuard.update(downloading: items.contains { $0.status == .running })
         autoRetry()
-        let total = items.reduce(Int64(0)) { $0 + ($1.isActive ? $1.speed : 0) }
-        speedHistory.append(Double(total)); speedHistory.removeFirst(speedHistory.count - 60)
+        speedHistory.append(Double(totalSpeed)); speedHistory.removeFirst(speedHistory.count - 60)
     }
 
     private func rebuild() {
@@ -439,7 +439,8 @@ final class DownloadStore: ObservableObject {
 
     // MARK: 视图用
 
-    var totalSpeed: Int64 { items.reduce(0) { $0 + ($1.isActive ? $1.speed : 0) } }
+    /// 顶部和菜单栏的总速度：用平滑后的值，瞬时值一秒一变看着闹心（10-29 用户反馈）
+    var totalSpeed: Int64 { items.reduce(0) { $0 + ($1.isActive ? $1.avgSpeed : 0) } }
     var activeItems: [Item] { filtered(items.filter(\.isActive)) }
     var doneItems: [Item] { filtered(items.filter { !$0.isActive }) }
     func items(in c: Category) -> [Item] { filtered(items.filter { $0.category == c }) }
@@ -512,6 +513,13 @@ final class DownloadStore: ObservableObject {
     /// headers/name 来自浏览器（自带扩展、LinkSwift 经网关传来），网盘直链靠它们鉴权
     func add(link: String, headers: [String: String], name: String?) { request([link], headers: headers, name: name) }
 
+    /// 重复添加：不再静默忽略，跳到那条任务并提示（10-29 自查：重复投链接时界面毫无反应）
+    private func reveal(existing: Item) {
+        section = existing.isActive ? .active : .done
+        selectedID = existing.id
+        notice = existing.isActive ? "「\(existing.title)」已在下载" : "「\(existing.title)」已下载过"
+    }
+
     /// 所有入口都走这里：去掉已在列表里的，再弹新建任务确认框（关掉询问时直接下载）
     func request(_ links: [String], headers: [String: String] = [:], name: String? = nil) {
         var fresh: [String] = []
@@ -520,7 +528,7 @@ final class DownloadStore: ObservableObject {
             if let existing = items.first(where: { $0.linkKey == Self.linkKey(l) }) {
                 // 之前失败的同一个链接再交过来：当作重试，不挡
                 if case .failed = existing.status { retry(existing); notice = "重新下载「\(existing.title)」"; continue }
-                notice = "「\(existing.title)」已在列表中"; continue
+                reveal(existing: existing); continue
             }
             if !fresh.contains(l) { fresh.append(l) }
         }
@@ -553,7 +561,7 @@ final class DownloadStore: ObservableObject {
     func start(link: String, headers: [String: String] = [:], name: String? = nil, dir chosen: URL? = nil, selectFiles chosenFiles: [Int]? = nil) {
         guard let kind = LinkKind.of(link) else { return }
         let key = Self.linkKey(link)
-        if items.contains(where: { $0.linkKey == key }) { return }
+        if let existing = items.first(where: { $0.linkKey == key }) { reveal(existing: existing); return }
         let dir = chosen ?? Folders.directory(for: kind)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
 
@@ -1073,7 +1081,7 @@ final class DownloadStore: ObservableObject {
         return Item(id: j.id.uuidString, source: .video(j.id), title: j.title != j.url ? j.title : j.state == .running ? "正在读取视频信息" : displayName(j.url), rawTitle: j.title,
                     origin: j.site, category: .video, status: status, downloaded: j.downloaded, total: j.total, speed: j.speed,
                     file: j.filePath.map { URL(fileURLWithPath: $0) }, createdAt: j.createdAt, thumbRemote: j.thumbnailURL,
-                    linkKey: linkKey(j.url))
+                    linkKey: linkKey(j.url), videoStage: j.state == .running ? (j.stage ?? .preparing) : nil)
     }
 
     /// 磁力按 hash 去重（同一资源不同 tracker 参数算同一个）

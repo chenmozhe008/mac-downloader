@@ -55,7 +55,7 @@ struct CircleIconButton: View {
                 .font(.system(size: 13, weight: .bold))
                 .foregroundStyle(Theme.text.opacity(0.8))
                 .frame(width: 34, height: 34)
-                .background(Circle().fill(Theme.faint))
+                .background(Circle().fill(Color.primary.opacity(0.09)))  // Theme.faint 在暖色背景上太淡
         }
         .buttonStyle(.plain)
         .help(help)

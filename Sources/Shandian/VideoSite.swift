@@ -37,43 +37,80 @@ struct VideoJob: Codable, Identifiable {
     var error: String?
     var createdAt = Date()
     var options: VideoOptions?     // 旧记录没有这一项，按默认处理
+    var stage: Stage?              // 下载中处在哪一步，界面据此显示（旧记录没有）
 
     enum State: String, Codable { case running, done, failed }
+    /// 解析网页 → 下视频 → 下音频 → 合并（或只下音频 → 转换）。解析和合并时没有字节进度，界面不能停在 0
+    enum Stage: String, Codable { case preparing, video, audio, merging, converting }
 }
 
-/// App 自带一份 yt-dlp，放在配置目录、每周自更新。视频站改版快，旧版会直接失效
+/// App 自带一份 yt-dlp，放在配置目录、每周检查新版。视频站改版快，旧版会直接失效
 /// （2026-10-27 实测：brew 里 2025-04 版下 B 站报 412，最新版不登录可下 1080P）。
+/// 用官方「目录版」yt-dlp_macos.zip：单文件版 yt-dlp_macos 每次启动都要解包到临时目录、系统再扫一遍，
+/// 10-29 实测每条视频白等 16 秒；目录版只有装好后第一次 16 秒，之后 0.3 秒。目录版不支持 -U，更新靠重新下载。
 enum YtDlp {
-    static let bundled = EngineConfig.supportDir.appendingPathComponent("bin/yt-dlp")
-    static let downloadURL = URL(string: "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos")!
+    static let dir = EngineConfig.supportDir.appendingPathComponent("bin/yt-dlp_macos")
+    static let bundled = dir.appendingPathComponent("yt-dlp_macos")
+    static let legacy = EngineConfig.supportDir.appendingPathComponent("bin/yt-dlp")   // 0.14 及以前的单文件版
+    static let downloadURL = URL(string: "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos.zip")!
+    static let latestAPI = URL(string: "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest")!
 
-    /// 优先用自带的；还没下好时退回 brew 装的
+    /// 优先用自带的；还没下好时退回旧的单文件版、brew 装的
     static var path: String? {
-        ([bundled.path, "/opt/homebrew/bin/yt-dlp", "/usr/local/bin/yt-dlp"]).first { FileManager.default.isExecutableFile(atPath: $0) }
+        ([bundled.path, legacy.path, "/opt/homebrew/bin/yt-dlp", "/usr/local/bin/yt-dlp"]).first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 
-    /// 启动时调用：没有就下载，超过 7 天就自更新
+    /// 启动时调用：没有就下载，超过 7 天查一次新版
     static func ensureFresh() async {
         let fm = FileManager.default
-        if !fm.isExecutableFile(atPath: bundled.path) {
-            let cfg = URLSessionConfiguration.ephemeral
-            cfg.connectionProxyDictionary = LocalProxy.sessionDictionary
-            guard let (tmp, resp) = try? await URLSession(configuration: cfg).download(from: downloadURL),
-                  (resp as? HTTPURLResponse)?.statusCode == 200 else { return }
-            try? fm.createDirectory(at: bundled.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try? fm.removeItem(at: bundled)
-            try? fm.moveItem(at: tmp, to: bundled)
-            try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bundled.path)
-            return
-        }
+        guard fm.isExecutableFile(atPath: bundled.path) else { await install(); return }
         let modified = (try? fm.attributesOfItem(atPath: bundled.path)[.modificationDate] as? Date) ?? .distantPast
         guard Date().timeIntervalSince(modified) > 7 * 86400 else { return }
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.connectionProxyDictionary = LocalProxy.sessionDictionary
+        if let (data, _) = try? await URLSession(configuration: cfg).data(from: latestAPI),
+           let tag = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["tag_name"] as? String,
+           tag != run(["--version"]) {
+            await install()
+        } else {
+            try? fm.setAttributes([.modificationDate: Date()], ofItemAtPath: bundled.path)  // 已是最新：记一下检查时间
+        }
+    }
+
+    /// 下载目录版、解压后整个换上；成功后删掉旧的单文件版，并空跑一次让系统先扫描完（否则第一条视频要多等 16 秒）
+    private static func install() async {
+        let fm = FileManager.default
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.connectionProxyDictionary = LocalProxy.sessionDictionary
+        guard let (zip, resp) = try? await URLSession(configuration: cfg).download(from: downloadURL),
+              (resp as? HTTPURLResponse)?.statusCode == 200 else { return }
+        let staging = dir.deletingLastPathComponent().appendingPathComponent(".yt-dlp-new")
+        try? fm.removeItem(at: staging)
+        let unzip = Process()
+        unzip.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+        unzip.arguments = ["-x", "-k", zip.path, staging.path]
+        try? unzip.run(); unzip.waitUntilExit()
+        try? fm.removeItem(at: zip)
+        let exe = staging.appendingPathComponent("yt-dlp_macos")
+        guard unzip.terminationStatus == 0, fm.fileExists(atPath: exe.path) else { try? fm.removeItem(at: staging); return }
+        try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: exe.path)
+        try? fm.removeItem(at: dir)
+        guard (try? fm.moveItem(at: staging, to: dir)) != nil else { return }
+        try? fm.removeItem(at: legacy)
+        _ = run(["--version"])
+    }
+
+    /// 同步跑一次，返回去掉首尾空白的输出
+    @discardableResult
+    static func run(_ args: [String]) -> String? {
         let p = Process()
         p.executableURL = bundled
-        p.arguments = ["-U"] + LocalProxy.ytdlpArguments(for: "https://github.com")
-        p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
-        try? p.run(); p.waitUntilExit()
-        try? fm.setAttributes([.modificationDate: Date()], ofItemAtPath: bundled.path)  // 已是最新时 -U 不改文件，手动记一下检查时间
+        p.arguments = args
+        let out = Pipe(); p.standardOutput = out; p.standardError = FileHandle.nullDevice
+        guard (try? p.run()) != nil else { return nil }
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 
@@ -101,7 +138,10 @@ final class VideoSiteRunner: @unchecked Sendable {
             "-P", dir.path, "-o", "%(title).80s [%(id)s].%(ext)s",
             "--no-playlist",
             "--newline", "--no-colors",
+            "--progress",   // --print 默认开安静模式、不输出进度（10-29 用户：一直 0 然后突然下好）
             "--print", "before_dl:SDTITLE %(title)s",
+            "--print", "before_dl:SDFMT %(format_id)s",
+            "--print", "before_dl:SDSIZE %(filesize,filesize_approx)s",
             "--print", "before_dl:SDTHUMB %(thumbnail)s",
             "--print", "after_move:SDFILE %(filepath)s",
             "--progress-template", "download:SDPROG %(progress.downloaded_bytes)s %(progress.total_bytes)s %(progress.total_bytes_estimate)s %(progress.speed)s %(progress.status)s",
@@ -119,7 +159,8 @@ final class VideoSiteRunner: @unchecked Sendable {
         let out = Pipe(); p.standardOutput = out
         let err = Pipe(); p.standardError = err
 
-        let state = JobState(job)
+        var first = job; first.stage = .preparing; update(first)
+        let state = JobState(first)
         out.fileHandleForReading.readabilityHandler = { h in
             let data = h.availableData
             guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
@@ -152,6 +193,12 @@ private final class JobState: @unchecked Sendable {
     private var job: VideoJob
     private var finishedBytes: Int64 = 0
     private var currentTotal: Int64 = 0
+    private var parts = 1          // 视频+音频分开下时是 2
+    private var finishedParts = 0
+    private var knownTotal: Int64 = 0  // 开下前 yt-dlp 给的整体大小（估算），有它总大小就不会中途变大、进度条不往回跳
+    // 速度按最近 3 秒实际下到的字节自己算：yt-dlp 每个新分块都从头估，开头几个包能报出 200 MB/s（10-29 实测）
+    private var samples: [(Date, Int64)] = []
+    private var lastEmit = Date.distantPast
     var lastError: String?
     private let lock = NSLock()
 
@@ -162,16 +209,30 @@ private final class JobState: @unchecked Sendable {
             if line.hasPrefix("SDTITLE ") { job.title = String(line.dropFirst(8)) }
             else if line.hasPrefix("SDTHUMB ") { let t = String(line.dropFirst(8)); job.thumbnailURL = t == "NA" ? nil : t }
             else if line.hasPrefix("SDFILE ") { job.filePath = String(line.dropFirst(7)) }
+            else if line.hasPrefix("SDFMT ") { parts = line.dropFirst(6).split(separator: "+").count }
+            else if line.hasPrefix("SDSIZE ") { knownTotal = Int64(Double(line.dropFirst(7)) ?? 0); job.total = max(job.total, knownTotal) }
             else if line.hasPrefix("SDPROG ") {
                 let f = line.split(separator: " ").map(String.init)
                 guard f.count >= 6 else { return nil }
                 let done = Int64(Double(f[1]) ?? 0)
                 let total = Int64(Double(f[2]) ?? Double(f[3]) ?? 0)
-                if f[5] == "finished" { finishedBytes += max(total, done); currentTotal = 0 }
+                if f[5] == "finished" { finishedBytes += max(total, done); currentTotal = 0; finishedParts += 1 }
                 else { currentTotal = total }
                 job.downloaded = finishedBytes + (f[5] == "finished" ? 0 : done)
-                job.total = max(job.total, finishedBytes + currentTotal)
-                job.speed = Int64(Double(f[4]) ?? 0)
+                job.total = max(knownTotal, finishedBytes + currentTotal, job.total)
+                let now = Date()
+                samples.append((now, job.downloaded))
+                samples.removeAll { now.timeIntervalSince($0.0) > 3 }
+                if let first = samples.first, now.timeIntervalSince(first.0) > 0.5 {
+                    job.speed = max(0, Int64(Double(job.downloaded - first.1) / now.timeIntervalSince(first.0)))
+                }
+                let stage = job.stage
+                let audioOnly = job.options?.audioOnly ?? false
+                if finishedParts >= parts { job.stage = audioOnly ? .converting : parts > 1 ? .merging : job.stage; job.speed = 0 }
+                else { job.stage = audioOnly || finishedParts > 0 ? .audio : .video }
+                // yt-dlp 每秒报几十次：只在换阶段时立即刷新，其余最多每 0.5 秒一次
+                guard job.stage != stage || now.timeIntervalSince(lastEmit) >= 0.5 else { return nil }
+                lastEmit = now
             } else { return nil }
             return job
         }
@@ -179,7 +240,7 @@ private final class JobState: @unchecked Sendable {
 
     func finish(ok: Bool) -> VideoJob {
         lock.withLock {
-            job.speed = 0
+            job.speed = 0; job.stage = nil
             if ok { job.state = .done; job.downloaded = max(job.downloaded, job.total) }
             else {
                 job.state = .failed
