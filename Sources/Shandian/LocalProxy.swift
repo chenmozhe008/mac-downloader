@@ -41,8 +41,8 @@ enum LocalProxy {
         ".cn", "baidu.com", "bdstatic.com", "bcebos.com", "baidupcs.com", "aliyun.com", "aliyuncs.com", "alicdn.com", "aliyundrive.com", "alipan.com",
         "quark.cn", "qq.com", "gtimg.com", "myqcloud.com", "tencent-cloud.com", "weiyun.com", "163.com", "126.net", "netease.com",
         "bilibili.com", "bilivideo.com", "bilivideo.cn", "hdslb.com", "b23.tv", "weibo.com", "sinaimg.cn", "sina.com",
-        "douyin.com", "douyinvod.com", "ixigua.com", "bytedance.com", "byteimg.com", "volces.com", "xiaohongshu.com", "xhscdn.com",
-        "kuaishou.com", "iqiyi.com", "youku.com", "mgtv.com", "sohu.com", "xunlei.com", "115.com", "123pan.com", "lanzou.com", "lanzoui.com",
+        "douyin.com", "douyinvod.com", "douyincdn.com", "zjcdn.com", "amemv.com", "snssdk.com", "ixigua.com", "bytedance.com", "byteimg.com", "volces.com", "xiaohongshu.com", "xhscdn.com",
+        "kuaishou.com", "kwaicdn.com", "kwimgs.com", "yximgs.com", "iqiyi.com", "youku.com", "mgtv.com", "sohu.com", "xunlei.com", "115.com", "123pan.com", "lanzou.com", "lanzoui.com",
         "huaweicloud.com", "myhuaweicloud.com", "ctyun.cn", "jd.com", "taobao.com", "tmall.com", "zhihu.com", "csdn.net", "gitee.com",
         "dytt89.com", "btsj6.com",
     ]

@@ -343,7 +343,7 @@ private struct SpeedChart: View {
 /// 空闲页：带暖光的放置区（⌘V 或拖入），下面列支持的来源和累计下载
 private struct EmptyState: View {
     @ObservedObject var store: DownloadStore
-    private let sources = ["磁力", "种子", "ed2k", "直链", "网盘", "B 站", "YouTube", "X", "微博"]
+    private let sources = ["磁力", "种子", "ed2k", "直链", "网盘", "B 站", "YouTube", "X", "微博", "小红书", "新片场", "抖音"]
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: 22, style: .continuous)

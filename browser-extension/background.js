@@ -60,6 +60,19 @@ function pickPlayingVideo() {
     const h = Math.max(0, Math.min(r.bottom, innerHeight) - Math.max(r.top, 0));
     return w * h;
   };
+  // 抖音：douyin-hook.js 记下的页面接口返回里有无水印直链（播放器是 blob，下面的 <video> 找不到地址）
+  if (/(^|\.)douyin\.com$/.test(location.hostname) && window.__shandianAweme) {
+    const store = window.__shandianAweme;
+    const q = new URLSearchParams(location.search);
+    let id = location.pathname.match(/\/video\/(\d+)/)?.[1] || q.get("modal_id") || q.get("vid");
+    if (!id || !store[id]) {
+      // 信息流（精选、推荐）：地址里没编号，找正在播的视频所在卡片上的编号
+      const playing = [...document.querySelectorAll("video")].find((v) => !v.paused && v.getBoundingClientRect().height > 0);
+      id = playing?.closest("[data-e2e-vid]")?.getAttribute("data-e2e-vid") || id;
+    }
+    const hit = store[id];
+    if (hit) return { src: hit.url, title: hit.title || document.title };
+  }
   const vids = [...document.querySelectorAll("video")].sort((a, b) => (b.paused ? 0 : 1e9) + area(b) - ((a.paused ? 0 : 1e9) + area(a)));
   for (const v of vids) {
     if (area(v) === 0) continue;

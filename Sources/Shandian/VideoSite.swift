@@ -139,6 +139,9 @@ final class VideoSiteRunner: @unchecked Sendable {
             "--no-playlist",
             "--newline", "--no-colors",
             "--progress",   // --print 默认开安静模式、不输出进度（10-29 用户：一直 0 然后突然下好）
+            // 分片并发：YouTube 单连接被限速，10-29 实测默认 1.4–1.6 MiB/s，-N 4 为 3.4–4.1；8、16 不比 4 明显快。
+            // B 站等整文件的站不分片，这个参数不起作用也无害
+            "--concurrent-fragments", "4",
             "--print", "before_dl:SDTITLE %(title)s",
             "--print", "before_dl:SDFMT %(format_id)s",
             "--print", "before_dl:SDSIZE %(filesize,filesize_approx)s",

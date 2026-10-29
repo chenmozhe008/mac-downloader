@@ -15,6 +15,7 @@
   - 推出移动硬盘：DiskArbitration 推出审批回调里查内核是否开着那块盘上的文件（`EngineHost.holdsFiles`），开着就暂停→结束内核→批准→2 秒后重启，插回自动续
   - 只监听 127.0.0.1，不开 0.0.0.0
 - **视频网站**：yt-dlp + ffmpeg，境外站走代理 7897，B 站/微博等国内站直连。**yt-dlp 用 App 自带的目录版**（`Application Support/ShandianDownload/bin/yt-dlp_macos/`，官方 `yt-dlp_macos.zip`；10-29 实测单文件版每次启动解包＋系统扫描白等 16 秒，目录版 0.3 秒。目录版不能 `-U`，每 7 天查 GitHub 最新 tag，不同就重下）。**参数带了 `--print` 必须同时带 `--progress`**，否则安静模式不出进度（10-29 用户：一直 0 突然下好）；速度用最近 3 秒字节自己算，yt-dlp 报的瞬时值开头能到 200 MB/s，brew 里的只做兜底——视频站改版快，10-27 实测 brew 的 2025-04 版下 B 站 412
+  - 分片并发 `--concurrent-fragments 4`：10-29 实测 YouTube 默认 1.4–1.6 MiB/s → 3.4–4.1；8、16 不比 4 明显快；`--http-chunk-size` 调大调小都不快，别设
   - 选格式 `-S res,vcodec:h264,acodec:aac`：默认会挑体积最小的 AV1（实测拿到 480P AV1），剪辑软件兼容差
 - **网盘**：浏览器里的 LinkSwift 油猴脚本拿直链 → 交给内核。**只装 Greasy Fork 上 hmjz100 的版本**；GitHub `Mario82del/LinkSwift` 发安装包，疑似冒名，别碰
 - 客户端界面（P2）：原生 SwiftUI，`NavigationSplitView` 系统侧栏 + 系统工具栏/搜索框（10-27 用户嫌手搓侧栏和红绿灯对不齐，别再手工画侧栏）；侧栏顶部 App 图标+名字，技术约定沿用小清（`Coding Project/mac-cleanup-manager/CLAUDE.md`）：本机 SwiftUI 宏编译不过，状态放 `ObservableObject @Published`；文案像专业 Mac 软件
@@ -68,7 +69,7 @@
 
 ## 已知事项
 
-- 抖音、小红书（10-28 用户定的做法）：不在 App 里做登录，用户在浏览器里登录着，扩展右键「用闪电全能下载这个视频」把页面地址 + 这两家 Cookie 交给网关，存成 `Application Support/ShandianDownload/cookies-<douyin|xhs>.txt`（600）给 yt-dlp `--cookies`（`SiteCookies.swift`）；抖音 `?modal_id=` 地址扩展里换成 `/video/<id>`。**10-28 实测 yt-dlp 抖音带登录 Cookie 也 403**（网页 API 加了签名校验），所以扩展先在页面里找正在播的 `<video>` 真实地址（http 开头）直接交给内核当直链下，带 Referer/UA/Cookie；找不到才退回页面地址给 yt-dlp。**10-28 实测抖音不行**：播放器是 blob（MSE 分段），页面 RENDER_DATA 里也没有 playAddr，用户说抖音先不做；**小红书 10-29 用户实测可下** ✅
+- 抖音、小红书（10-28 用户定的做法）：不在 App 里做登录，用户在浏览器里登录着，扩展右键「用闪电全能下载这个视频」把页面地址 + 这两家 Cookie 交给网关，存成 `Application Support/ShandianDownload/cookies-<douyin|xhs>.txt`（600）给 yt-dlp `--cookies`（`SiteCookies.swift`）；抖音 `?modal_id=` 地址扩展里换成 `/video/<id>`。**10-28 实测 yt-dlp 抖音带登录 Cookie 也 403**（网页 API 加了签名校验），所以扩展先在页面里找正在播的 `<video>` 真实地址（http 开头）直接交给内核当直链下，带 Referer/UA/Cookie；找不到才退回页面地址给 yt-dlp。**抖音（10-29 接通，1080P H.264 无水印、不用登录）**：扩展 `douyin-hook.js`（manifest content_scripts，document_start、world MAIN）在页面里包一层 `JSON.parse` / `Response.prototype.json`，记下页面自己请求到的 `aweme_detail` / `aweme_list`（签名 a_bogus 由抖音页面自己算，改算法不受影响；开源 TikTokDownloader/f2/Evil0ctal 都是自己算签名，f2 已 403）。**别改回包 fetch/XHR**：抖音安全 SDK 加载后会换掉它们（4 次 3 次被挤掉），用属性陷阱硬抢最外层会和它的防篡改死循环、页面卡死。同一条视频多个接口都有，「相关推荐」里只带低画质地址，只在更好时替换（H.264 > 分辨率 > 码率）。`v26-web.douyinvod.com` 要带抖音 Referer，扩展本来就带。信息流（精选 / modal_id）按正在播的视频卡片 `data-e2e-vid` 取，**未实测**；快手 `<video>` 是普通 mp4，现有逻辑应能用，**未实测**；视频号不接（唯一能用的 wx_channels_download 要装共用私钥的根证书 + 接管系统代理）；**小红书 10-29 用户实测可下** ✅
 - 视频站实测（10-27，最新 yt-dlp）：B 站不登录 1080P ✅、微博 1080P ✅；抖音要「新鲜 cookie」，匿名 ttwid 也 403 ❌；小红书 yt-dlp 自带测试笔记拿不到视频，真实链接走扩展 10-29 用户实测可下 ✅。B 站 1080P+/4K 要登录 cookie
 - lux（iawia002/lux）最后发版 2024-05，抖音/小红书失效、B 站只有 480P，不用
 - Gopeed API 新建任务参数是 `opts`（不是 `opt`），写错不报错、路径静默失效

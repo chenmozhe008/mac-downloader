@@ -139,7 +139,7 @@ private struct IntroPage: View {
         ("photo.on.rectangle", "影片一目了然", "自动整理影片名称，显示影片画面或视频封面。"),
         ("checkmark.seal.fill", "无广告，无需账号", "下载核心为开源项目 Gopeed 和 yt-dlp，视频网站组件每周自动更新。"),
     ]
-    private let sources = ["磁力", "种子", "ed2k", "HTTP 直链", "网盘直链", "B 站", "YouTube", "X", "微博"]
+    private let sources = ["磁力", "种子", "ed2k", "HTTP 直链", "网盘直链", "YouTube", "X", "B 站", "微博", "小红书", "新片场", "抖音"]
     private let notes: [(String, String)] = [
         ("doc.on.clipboard", "复制链接后在窗口中按 ⌘V 即可下载，也可拖入链接或种子文件；装好浏览器扩展后，网页上点下载会直接交给闪电全能下载。"),
         ("externaldrive", "电影默认存到移动硬盘；硬盘未连接时暂存到「下载 › 电影」。推出硬盘前会自动暂停存在上面的任务。"),
@@ -176,7 +176,7 @@ private struct IntroPage: View {
             VStack(alignment: .leading, spacing: 12) {
                 SectionTitle("支持的来源")
                 FlowChips(items: sources)
-                Text("抖音暂不支持（网页版视频加密，开源工具目前都下不了）；小红书在浏览器登录后，用扩展「下载这个视频」。").font(.system(size: 12.5)).foregroundStyle(Theme.sub)
+                Text("小红书、新片场、抖音：在浏览器里打开视频页，点扩展里的「下载这个视频」。").font(.system(size: 12.5)).foregroundStyle(Theme.sub)
             }
             VStack(alignment: .leading, spacing: 12) {
                 SectionTitle("使用说明")
