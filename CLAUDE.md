@@ -1,6 +1,6 @@
 # 闪电全能下载（shandian-download，10-29 由 mac-downloader 改名）
 
-> App 名「闪电全能下载」（10-29 用户定，原名「闪电下载」；卖点是什么都能下，不是比迅雷快），可执行名 `Shandian`，bundle id `io.github.chenmozhe008.shandian`
+> App 名「闪电全能下载」（10-29 用户定，原名「闪电下载」；卖点是常用渠道都能下 + 快；用户嫌「什么都能下」说得太满，对外别这么写，也别承诺比迅雷会员快），可执行名 `Shandian`，bundle id `io.github.chenmozhe008.shandian`
 
 自用 Mac 下载器，目标是替代迅雷：磁力/BT/ed2k/HTTP + 视频网站 + 网盘直链，一个客户端搞定，浏览器一点就下。
 方案与阶段：`docs/PLAN.md`（P0 规则 → P1 引擎 → P2 界面 → P3 浏览器与网盘 → P4 切换）。
@@ -14,7 +14,7 @@
   - Go 工具链、Gopeed 源码、编译缓存都在移动硬盘 `Applications/ShandianBuild/`（不装全局）；**必须开 CGO**（不开 anacrolix 用纯 Go uTP，10-28 实测只剩 1 个连接）；本机命令行工具的链接器和 SDK 对不上，`build_engine.sh` 用移动硬盘上 Xcode-26.5 的工具链
   - 推出移动硬盘：DiskArbitration 推出审批回调里查内核是否开着那块盘上的文件（`EngineHost.holdsFiles`），开着就暂停→结束内核→批准→2 秒后重启，插回自动续
   - 只监听 127.0.0.1，不开 0.0.0.0
-- **视频网站**：yt-dlp + ffmpeg，境外站走代理 7897，B 站/微博等国内站直连。**yt-dlp 用 App 自带的目录版**（`Application Support/ShandianDownload/bin/yt-dlp_macos/`，官方 `yt-dlp_macos.zip`；10-29 实测单文件版每次启动解包＋系统扫描白等 16 秒，目录版 0.3 秒。目录版不能 `-U`，每 7 天查 GitHub 最新 tag，不同就重下）。**参数带了 `--print` 必须同时带 `--progress`**，否则安静模式不出进度（10-29 用户：一直 0 突然下好）；速度用最近 3 秒字节自己算，yt-dlp 报的瞬时值开头能到 200 MB/s，brew 里的只做兜底——视频站改版快，10-27 实测 brew 的 2025-04 版下 B 站 412
+- **视频网站**：yt-dlp + ffmpeg，境外站走代理 7897，B 站/微博等国内站直连。**yt-dlp 用 App 自带的目录版**（`Application Support/ShandianDownload/bin/yt-dlp_macos/`，官方 `yt-dlp_macos.zip`；10-29 实测单文件版每次启动解包＋系统扫描白等 16 秒，目录版 0.3 秒。目录版不能 `-U`，每 7 天查 GitHub 最新 tag，不同就重下），brew 里的只做兜底——视频站改版快，10-27 实测 brew 的 2025-04 版下 B 站 412。**参数带了 `--print` 必须同时带 `--progress`**，否则安静模式不出进度（10-29 用户：一直 0 突然下好）；速度用最近 3 秒字节自己算，yt-dlp 报的瞬时值开头能到 200 MB/s
   - 分片并发 `--concurrent-fragments 4`：10-29 实测 YouTube 默认 1.4–1.6 MiB/s → 3.4–4.1；8、16 不比 4 明显快；`--http-chunk-size` 调大调小都不快，别设
   - 选格式 `-S res,vcodec:h264,acodec:aac`：默认会挑体积最小的 AV1（实测拿到 480P AV1），剪辑软件兼容差
 - **网盘**：浏览器里的 LinkSwift 油猴脚本拿直链 → 交给内核。**只装 Greasy Fork 上 hmjz100 的版本**；GitHub `Mario82del/LinkSwift` 发安装包，疑似冒名，别碰
@@ -48,6 +48,7 @@
 - `script/dl.sh "<链接或本地.torrent>"`：统一入口，自动分流
 - `script/build_app.sh [run|package]`：编译打包成 `dist/闪电全能下载.app`（会带上已编好的内核）。**不带参数＝run：会杀掉并重开用户正在用的 App**（App 就从 dist 运行）；只想编译验证用 `package`
 - `script/build_engine.sh`：下 Go、拉 Gopeed v1.9.3、打补丁、编译内核
+- `script/install.sh`：给别人用的一键安装（README 里 `curl … | bash`）：查 GitHub 最新 Release → 装进 /Applications → 去 quarantine → 有 brew 就装 ffmpeg。`SHANDIAN_DEST=<目录> SHANDIAN_TEST=1` 在临时目录测，不碰用户正在用的 App
 
 ## 下载设置（`configure` 写入，改值先改这里的说明）
 
@@ -84,7 +85,10 @@
 
 GitHub **公开**库 `chenmozhe008/shandian-download`（10-28 建，10-29 用户同意公开，分支 master，GPL-3.0——内核基于 Gopeed GPL-3.0，只能用 GPL）。推送仍按全局红线先问用户
 - 发布：`output/release/` 里拷一份 dist 的 App，**`codesign --force --deep --sign -` 改 ad-hoc 签名再打包**（本机用的 Apple Development 证书带用户邮箱，不能外发），`ditto -c -k --keepParent` 打 zip，`gh release create v<版本>`。**附件名用英文 `Shandian-<版本>.zip`**（中文名会被 GitHub 改成 default.zip）。v0.16.0 为首个公开版
-- 公开页面别放下载记录截图（有片名）；README 的安装步骤要和 App 里「浏览器扩展」窗口的按钮文字一致
+- **install.sh 按附件名 `Shandian-*.zip` 找安装包**：发版改附件名要同步改脚本，否则一行命令安装失效
+- 公开页面别放下载记录截图（有片名）；README 的安装步骤要和 App 里「浏览器扩展」窗口的按钮文字一致；对外数字用测速记录里的区间（磁力起速 5–18 秒 vs 迅雷非会员 45–64 秒），别挑最有利的单值
+- 图标 10-29 定稿 J1（`Resources/icon/icon.html`：深橙底 + 原闪电箭头，和闪电说的黄橙区分）；菜单栏 18 点。别再换图形，改前先出方案给用户挑
+- 推广图和文案在 `output/闪电全能下载-推广/`（源文件 `output/promo/`，Chrome 无头渲染 1080×1350 @2x）
 
 ## 目录
 
