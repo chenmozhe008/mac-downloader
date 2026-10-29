@@ -248,7 +248,10 @@ private final class JobState: @unchecked Sendable {
             else {
                 job.state = .failed
                 // 抖音、小红书没带登录信息时 yt-dlp 的报错看不懂，直接告诉怎么办
-                job.error = SiteCookies.site(of: job.url) != nil && SiteCookies.ytdlpArguments(for: job.url).isEmpty
+                // 抖音只能由扩展从页面里取直链，yt-dlp 必然失败（要签名）：直接告诉怎么办
+                job.error = (URL(string: job.url)?.host ?? "").hasSuffix("douyin.com")
+                    ? "请在浏览器里打开这个抖音视频，点扩展里的「下载这个视频」"
+                    : SiteCookies.site(of: job.url) != nil && SiteCookies.ytdlpArguments(for: job.url).isEmpty
                     ? "需要在浏览器里登录后，右键「用闪电全能下载这个视频」" : (lastError ?? "下载失败")
             }
             if let path = job.filePath, let size = (try? FileManager.default.attributesOfItem(atPath: path))?[.size] as? Int64 {

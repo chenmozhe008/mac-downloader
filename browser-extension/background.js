@@ -95,13 +95,34 @@ function pickPlayingVideo() {
   return null;
 }
 
-async function downloadVideoInTab(tab) {
-  let picked = null;
+async function pickInTab(tabId) {
   try {
-    // MAIN：要读页面自己的变量（小红书的 __INITIAL_STATE__）
-    const [res] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: pickPlayingVideo, world: "MAIN" });
-    picked = res?.result;
-  } catch (_) {}
+    // MAIN：要读页面自己的变量（小红书的 __INITIAL_STATE__、抖音 douyin-hook.js 记下的数据）
+    const [res] = await chrome.scripting.executeScript({ target: { tabId }, func: pickPlayingVideo, world: "MAIN" });
+    return res?.result || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+// 刷新标签页并等它加载完，再多等一会儿让页面把视频数据请求回来
+async function reloadAndWait(tabId, extraMs) {
+  await new Promise((resolve) => {
+    const done = (id, info) => { if (id === tabId && info.status === "complete") { chrome.tabs.onUpdated.removeListener(done); resolve(); } };
+    chrome.tabs.onUpdated.addListener(done);
+    chrome.tabs.reload(tabId);
+    setTimeout(resolve, 20000);
+  });
+  await new Promise((r) => setTimeout(r, extraMs));
+}
+
+async function downloadVideoInTab(tab) {
+  let picked = await pickInTab(tab.id);
+  // 抖音页面如果是扩展装好 / 更新之前打开的，douyin-hook.js 没挂上、什么都没记：刷新一次再取（10-29 用户：点了没下成）
+  if (!picked && /(^|\.)douyin\.com$/.test(new URL(tab.url).hostname)) {
+    await reloadAndWait(tab.id, 4000);
+    picked = await pickInTab(tab.id);
+  }
   if (picked) {
     const title = (picked.title || "视频").replace(/\s*[-|]\s*(抖音|小红书|哔哩哔哩.*|YouTube)\s*$/, "").trim().slice(0, 80) || "视频";
     return sendToApp(picked.src, tab.url, title.replace(/[\\/:*?"<>|]/g, " ") + ".mp4", tab.id);
