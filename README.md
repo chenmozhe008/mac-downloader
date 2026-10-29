@@ -109,6 +109,8 @@ curl -fsSL https://raw.githubusercontent.com/chenmozhe008/shandian-download/mast
 
 **视频下完没有声音，或者提示合并失败**：没装 ffmpeg，在终端运行 `brew install ffmpeg`。
 
+**云盘离线登录不上，或者从云盘拉回很慢**：PikPak 是境外服务，打开代理后再试。
+
 **电影存到哪了**：默认在「下载 › 电影」，视频网站的视频和其他文件在「下载」。在设置里可以改。
 
 ## 从源码构建
