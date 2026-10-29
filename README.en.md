@@ -63,6 +63,7 @@ Videos are downloaded in the highest available quality, preferring H.264 video a
 - **Settings**: separate save locations for torrents, video platforms and other files; adjustable concurrent tasks and a global speed limit
 - **Trash**: removed tasks are kept in a list and can be downloaded again
 - **Notifications**: a system notification and a sound when a download completes
+- **One-click update**: when a new version is out, the version label at the bottom of the sidebar changes to "新版本" (new version); click it to download the build for your chip, verify and install it inside the app, which then reopens and resumes unfinished tasks
 
 ## Requirements
 
@@ -80,7 +81,7 @@ Open Terminal, paste the command below and press Return:
 curl -fsSL https://raw.githubusercontent.com/chenmozhe008/shandian-download/master/script/install.sh | bash
 ```
 
-The script downloads the latest release into Applications, opens it, and avoids the "unidentified developer" prompt. If [Homebrew](https://brew.sh) is installed, ffmpeg is installed as well. Run the same command again to update.
+The script downloads the latest release into Applications, opens it, and avoids the "unidentified developer" prompt. If [Homebrew](https://brew.sh) is installed, ffmpeg is installed as well. Run the same command again to update; from 0.18.0 the app can also update itself.
 
 ### Option 2: manual install
 
