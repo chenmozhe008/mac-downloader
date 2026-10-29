@@ -4,7 +4,12 @@
 
 # 闪电全能下载
 
-**原生 macOS 下载工具 · BT / HTTP / 视频平台统一管理**
+**原生 macOS 下载工具**
+
+在一个窗口中管理磁力链接、种子、ed2k、HTTP 直链、网盘直链，<br>
+以及 YouTube、哔哩哔哩、抖音、小红书等平台的视频下载
+
+浏览器扩展一键接管 · 边下边播 · 断点续传 · 云盘离线加速
 
 ![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue)
 ![Platform](https://img.shields.io/badge/macOS-14%2B-black?logo=apple)
