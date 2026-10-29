@@ -1,4 +1,4 @@
-# 闪电全能下载（mac-downloader）
+# 闪电全能下载（shandian-download，10-29 由 mac-downloader 改名）
 
 > App 名「闪电全能下载」（10-29 用户定，原名「闪电下载」；卖点是什么都能下，不是比迅雷快），可执行名 `Shandian`，bundle id `io.github.chenmozhe008.shandian`
 
@@ -82,7 +82,7 @@
 
 ## 仓库
 
-GitHub **公开**库 `chenmozhe008/mac-downloader`（10-28 建，10-29 用户同意公开，分支 master，GPL-3.0——内核基于 Gopeed GPL-3.0，只能用 GPL）。推送仍按全局红线先问用户
+GitHub **公开**库 `chenmozhe008/shandian-download`（10-28 建，10-29 用户同意公开，分支 master，GPL-3.0——内核基于 Gopeed GPL-3.0，只能用 GPL）。推送仍按全局红线先问用户
 - 发布：`output/release/` 里拷一份 dist 的 App，**`codesign --force --deep --sign -` 改 ad-hoc 签名再打包**（本机用的 Apple Development 证书带用户邮箱，不能外发），`ditto -c -k --keepParent` 打 zip，`gh release create v<版本>`。**附件名用英文 `Shandian-<版本>.zip`**（中文名会被 GitHub 改成 default.zip）。v0.16.0 为首个公开版
 - 公开页面别放下载记录截图（有片名）；README 的安装步骤要和 App 里「浏览器扩展」窗口的按钮文字一致
 
