@@ -11,6 +11,8 @@
 
 浏览器扩展一键接管 · 边下边播 · 断点续传 · 云盘离线加速
 
+简体中文 | [English](README.en.md)
+
 ![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue)
 ![Platform](https://img.shields.io/badge/macOS-14%2B-black?logo=apple)
 ![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-arm64-555)
