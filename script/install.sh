@@ -19,7 +19,7 @@ if [[ "$(sysctl -n hw.optional.arm64 2>/dev/null)" == "1" ]]; then CHIP="AppleSi
 MAJOR=$(sw_vers -productVersion | cut -d. -f1)
 (( MAJOR >= 14 )) || { echo "需要 macOS 14 或更新版本"; exit 1; }
 
-say "1/4 查找最新版本（$CHIP_NAME）"
+say "1/4 查找最新版本（${CHIP_NAME}）"
 URLS=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" \
   | grep -o '"browser_download_url": *"[^"]*Shandian-[^"]*\.zip"' | sed 's/.*"\(https[^"]*\)"/\1/')
 URL=$(echo "$URLS" | grep -- "-$CHIP\.zip" | head -1 || true)
