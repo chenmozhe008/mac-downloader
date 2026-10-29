@@ -735,17 +735,12 @@ private struct TrashPage: View {
                 Text("移除的任务保留在这里，可以重新下载或找到文件").font(.system(size: 14)).foregroundStyle(Theme.sub)
                 Spacer()
                 if !store.removedRecords.isEmpty {
-                    // 系统按钮的浅灰底在暖色背景上看不出来（10-29 用户反馈）：浅红底 + 红字，一眼看出是删除类操作
+                    // 系统按钮的浅灰底在暖色背景上看不出来（10-29 用户反馈）：同「新建下载」的橙底白字，不另起红色系
                     Button { confirmClear = true } label: {
-                        Label("清空回收站", systemImage: "trash")
-                            .font(.system(size: 13.5, weight: .semibold))
-                            .foregroundStyle(Theme.failed)
-                            .padding(.horizontal, 14).padding(.vertical, 7)
-                            .background(Capsule().fill(Theme.failed.opacity(0.12)))
-                            .overlay(Capsule().strokeBorder(Theme.failed.opacity(0.3), lineWidth: 0.8))
-                            .contentShape(Capsule())
+                        Label("清空回收站", systemImage: "trash").labelStyle(.titleAndIcon).font(.system(size: 13, weight: .semibold))
+                            .padding(.horizontal, 4)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.borderedProminent)
                 }
             }
             .padding(.vertical, 12)
